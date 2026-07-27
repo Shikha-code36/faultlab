@@ -1,0 +1,3 @@
+# The load generator runs on k6 (grafana/k6 Docker image), not Python.
+# No Python dependencies are needed; this file is kept for structural parity
+# with the other services.
