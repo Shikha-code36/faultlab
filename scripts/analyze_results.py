@@ -1,13 +1,13 @@
 """Loads every run under experiments/runs/ and reports where the system
-starts to degrade.
+starts to saturate.
 
-Degradation, for this first pass, is defined against each RPS's own
-baseline (0ms injected latency) run:
-  - p95 request latency more than 2x the baseline p95, or
-  - error rate (timeouts + errors) above 1%.
-
-This is a starting heuristic, not a claim -- the printed table is what lets
-a human judge where saturation actually begins.
+Injecting latency always makes requests slower -- that's just propagation,
+not a problem on its own. What actually matters is saturation: the
+connection pool running out of capacity. A run is flagged as saturated if
+any of the following hold:
+  - error rate (timeouts + errors) above 0%,
+  - any pool-acquisition timeouts occurred, or
+  - the pool ran at its configured max size (no spare capacity left).
 
 Usage:
   python scripts/analyze_results.py
@@ -24,8 +24,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = REPO_ROOT / "experiments" / "runs"
 
-ERROR_RATE_THRESHOLD = 0.01
-LATENCY_MULTIPLIER_THRESHOLD = 2.0
+ERROR_RATE_THRESHOLD = 0.0
 
 
 def load_runs() -> list[dict]:
@@ -46,6 +45,7 @@ def load_runs() -> list[dict]:
                 "run_id": metadata["run_id"],
                 "rps": metadata["rps"],
                 "injected_latency_ms": metadata["injected_latency_ms"],
+                "pool_size": metadata.get("pool_size"),
                 "throughput_rps": load.get("throughput_rps"),
                 "error_rate": load.get("error_rate"),
                 "p95_latency_ms": (load.get("latency_ms") or {}).get("p95"),
@@ -61,40 +61,35 @@ def load_runs() -> list[dict]:
     return runs
 
 
-def find_baselines(runs: list[dict]) -> dict[int, dict]:
-    return {r["rps"]: r for r in runs if r["injected_latency_ms"] == 0}
-
-
-def annotate_degradation(runs: list[dict], baselines: dict[int, dict]) -> None:
+def annotate_saturation(runs: list[dict]) -> None:
     for r in runs:
-        baseline = baselines.get(r["rps"])
-        degraded = False
+        saturated = False
         reasons = []
 
         if r["error_rate"] is not None and r["error_rate"] > ERROR_RATE_THRESHOLD:
-            degraded = True
+            saturated = True
             reasons.append(f"error_rate={r['error_rate']:.2%}")
 
-        if (
-            baseline
-            and baseline["p95_latency_ms"]
-            and r["p95_latency_ms"]
-            and r["p95_latency_ms"] > baseline["p95_latency_ms"] * LATENCY_MULTIPLIER_THRESHOLD
-        ):
-            degraded = True
-            reasons.append(
-                f"p95={r['p95_latency_ms']:.0f}ms > {LATENCY_MULTIPLIER_THRESHOLD}x baseline"
-                f" ({baseline['p95_latency_ms']:.0f}ms)"
-            )
+        if r["app_pool_timeout_count"]:
+            saturated = True
+            reasons.append(f"pool_timeouts={r['app_pool_timeout_count']}")
 
-        r["degraded"] = degraded
-        r["degradation_reasons"] = "; ".join(reasons)
+        if (
+            r["app_pool_active_max"] is not None
+            and r["pool_size"] is not None
+            and r["app_pool_active_max"] >= r["pool_size"]
+        ):
+            saturated = True
+            reasons.append(f"pool_active={r['app_pool_active_max']} (max={r['pool_size']})")
+
+        r["saturated"] = saturated
+        r["saturation_reasons"] = "; ".join(reasons)
 
 
 def print_table(runs: list[dict]) -> None:
     header = (
         f"{'RPS':>5} {'lat(ms)':>8} {'p95(ms)':>9} {'p99(ms)':>9} "
-        f"{'err%':>7} {'pool_active':>11} {'in_flight':>9} {'degraded':>9}"
+        f"{'err%':>7} {'pool_active':>11} {'in_flight':>9} {'saturated':>9}"
     )
     print(header)
     print("-" * len(header))
@@ -104,24 +99,24 @@ def print_table(runs: list[dict]) -> None:
         err = f"{r['error_rate']*100:.2f}" if r["error_rate"] is not None else "-"
         pool = r["app_pool_active_max"] if r["app_pool_active_max"] is not None else "-"
         inflight = r["app_in_flight_max"] if r["app_in_flight_max"] is not None else "-"
-        flag = "YES" if r["degraded"] else ""
+        flag = "YES" if r["saturated"] else ""
         print(
             f"{r['rps']:>5} {r['injected_latency_ms']:>8} {p95:>9} {p99:>9} "
             f"{err:>7} {pool!s:>11} {inflight!s:>9} {flag:>9}"
         )
 
     print()
-    first_degraded_per_rps: dict[int, dict] = {}
+    first_saturated_per_rps: dict[int, dict] = {}
     for r in sorted(runs, key=lambda x: (x["rps"], x["injected_latency_ms"])):
-        if r["degraded"] and r["rps"] not in first_degraded_per_rps:
-            first_degraded_per_rps[r["rps"]] = r
+        if r["saturated"] and r["rps"] not in first_saturated_per_rps:
+            first_saturated_per_rps[r["rps"]] = r
 
-    if first_degraded_per_rps:
-        print("First degraded point per RPS:")
-        for rps, r in sorted(first_degraded_per_rps.items()):
-            print(f"  rps={rps}: latency={r['injected_latency_ms']}ms ({r['degradation_reasons']})")
+    if first_saturated_per_rps:
+        print("First saturation point per RPS:")
+        for rps, r in sorted(first_saturated_per_rps.items()):
+            print(f"  rps={rps}: latency={r['injected_latency_ms']}ms ({r['saturation_reasons']})")
     else:
-        print("No runs crossed the degradation thresholds.")
+        print("No runs crossed the saturation thresholds.")
 
 
 def write_csv(runs: list[dict], path: Path) -> None:
@@ -139,8 +134,8 @@ def write_csv(runs: list[dict], path: Path) -> None:
         "app_pool_timeout_count",
         "app_query_timeout_count",
         "app_error_count",
-        "degraded",
-        "degradation_reasons",
+        "saturated",
+        "saturation_reasons",
     ]
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -160,8 +155,7 @@ def main():
         print(f"No completed runs found under {RUNS_DIR}")
         return
 
-    baselines = find_baselines(runs)
-    annotate_degradation(runs, baselines)
+    annotate_saturation(runs)
     print_table(runs)
 
     if args.csv:
