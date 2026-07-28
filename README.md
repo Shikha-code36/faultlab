@@ -10,8 +10,8 @@ becomes slower?
 Load Generator (k6) -> Service A (FastAPI + asyncpg) -> Toxiproxy -> PostgreSQL
 ```
 
-Everything in the request path is real: a real bounded connection pool, a
-real proxy injecting real latency, a real database.
+Every component in the request path is real: a bounded connection pool, a
+proxy injecting real network latency, and a PostgreSQL database.
 
 ## Running the stack
 
