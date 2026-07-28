@@ -1,13 +1,23 @@
-"""Loads every run under experiments/runs/ and reports where the system
-starts to saturate.
+"""Loads every run under experiments/runs/ and reports retry amplification
+and saturation behavior for Experiment 002.
 
 Injecting latency always makes requests slower -- that's just propagation,
-not a problem on its own. What actually matters is saturation: the
+not a problem on its own. What actually matters is saturation: Service B's
 connection pool running out of capacity. A run is flagged as saturated if
 any of the following hold:
   - error rate (timeouts + errors) above 0%,
-  - any pool-acquisition timeouts occurred, or
-  - the pool ran at its configured max size (no spare capacity left).
+  - any pool-acquisition timeouts occurred on Service B, or
+  - Service B's pool ran at its configured max size (no spare capacity left).
+
+On top of that, this analyzer reports the retry-specific metrics that make
+Experiment 002 distinct from Experiment 001:
+  - amplification factor: requests Service B received / requests Service A
+    was offered. ~1.0 baseline, up to ~2.0 for a single retry policy.
+  - retry rate: retries made per request offered to Service A.
+  - retry success rate: fraction of successes that needed a retry.
+  - the collapse point per retry policy: the lowest RPS (at a given
+    injected latency) where that policy saturates, so you can see whether
+    retries shift the collapse point earlier than the no-retry baseline.
 
 Usage:
   python scripts/analyze_results.py
@@ -39,23 +49,31 @@ def load_runs() -> list[dict]:
         results = json.loads(results_path.read_text())
         load = results.get("load_generator", {})
         app = results.get("application", {})
+        service_a = app.get("service_a", {})
+        service_b = app.get("service_b", {})
 
         runs.append(
             {
                 "run_id": metadata["run_id"],
                 "rps": metadata["rps"],
                 "injected_latency_ms": metadata["injected_latency_ms"],
+                "retry_policy": metadata.get("retry_policy", "none"),
                 "pool_size": metadata.get("pool_size"),
                 "throughput_rps": load.get("throughput_rps"),
                 "error_rate": load.get("error_rate"),
                 "p95_latency_ms": (load.get("latency_ms") or {}).get("p95"),
                 "p99_latency_ms": (load.get("latency_ms") or {}).get("p99"),
-                "app_pool_active_max": app.get("pool_active_max"),
-                "app_in_flight_max": app.get("in_flight_max"),
-                "app_pool_wait_p95_ms_max": app.get("pool_wait_p95_ms_max"),
-                "app_pool_timeout_count": app.get("pool_timeout_count_in_window"),
-                "app_query_timeout_count": app.get("query_timeout_count_in_window"),
-                "app_error_count": app.get("error_count_in_window"),
+                "amplification_factor": app.get("amplification_factor"),
+                "retry_rate": app.get("retry_rate"),
+                "retry_success_rate": app.get("retry_success_rate"),
+                "a_offered_count": service_a.get("offered_count"),
+                "a_timeout_count": service_a.get("timeout_count"),
+                "a_upstream_error_count": service_a.get("upstream_error_count"),
+                "b_received_count": service_b.get("received_count"),
+                "b_pool_active_max": service_b.get("pool_active_max"),
+                "b_pool_timeout_count": service_b.get("pool_timeout_count"),
+                "b_query_timeout_count": service_b.get("query_timeout_count"),
+                "b_error_count": service_b.get("error_count"),
             }
         )
     return runs
@@ -70,17 +88,17 @@ def annotate_saturation(runs: list[dict]) -> None:
             saturated = True
             reasons.append(f"error_rate={r['error_rate']:.2%}")
 
-        if r["app_pool_timeout_count"]:
+        if r["b_pool_timeout_count"]:
             saturated = True
-            reasons.append(f"pool_timeouts={r['app_pool_timeout_count']}")
+            reasons.append(f"pool_timeouts={r['b_pool_timeout_count']}")
 
         if (
-            r["app_pool_active_max"] is not None
+            r["b_pool_active_max"] is not None
             and r["pool_size"] is not None
-            and r["app_pool_active_max"] >= r["pool_size"]
+            and r["b_pool_active_max"] >= r["pool_size"]
         ):
             saturated = True
-            reasons.append(f"pool_active={r['app_pool_active_max']} (max={r['pool_size']})")
+            reasons.append(f"pool_active={r['b_pool_active_max']} (max={r['pool_size']})")
 
         r["saturated"] = saturated
         r["saturation_reasons"] = "; ".join(reasons)
@@ -88,33 +106,40 @@ def annotate_saturation(runs: list[dict]) -> None:
 
 def print_table(runs: list[dict]) -> None:
     header = (
-        f"{'RPS':>5} {'lat(ms)':>8} {'p95(ms)':>9} {'p99(ms)':>9} "
-        f"{'err%':>7} {'pool_active':>11} {'in_flight':>9} {'saturated':>9}"
+        f"{'RPS':>5} {'retry':>9} {'lat(ms)':>8} {'p95(ms)':>9} {'p99(ms)':>9} "
+        f"{'err%':>7} {'amp':>6} {'retry%':>7} {'pool_active':>11} {'saturated':>9}"
     )
     print(header)
     print("-" * len(header))
-    for r in sorted(runs, key=lambda x: (x["rps"], x["injected_latency_ms"])):
+    for r in sorted(runs, key=lambda x: (x["retry_policy"], x["injected_latency_ms"], x["rps"])):
         p95 = f"{r['p95_latency_ms']:.0f}" if r["p95_latency_ms"] is not None else "-"
         p99 = f"{r['p99_latency_ms']:.0f}" if r["p99_latency_ms"] is not None else "-"
         err = f"{r['error_rate']*100:.2f}" if r["error_rate"] is not None else "-"
-        pool = r["app_pool_active_max"] if r["app_pool_active_max"] is not None else "-"
-        inflight = r["app_in_flight_max"] if r["app_in_flight_max"] is not None else "-"
+        amp = f"{r['amplification_factor']:.2f}" if r["amplification_factor"] is not None else "-"
+        retry_pct = f"{r['retry_rate']*100:.1f}" if r["retry_rate"] is not None else "-"
+        pool = r["b_pool_active_max"] if r["b_pool_active_max"] is not None else "-"
         flag = "YES" if r["saturated"] else ""
         print(
-            f"{r['rps']:>5} {r['injected_latency_ms']:>8} {p95:>9} {p99:>9} "
-            f"{err:>7} {pool!s:>11} {inflight!s:>9} {flag:>9}"
+            f"{r['rps']:>5} {r['retry_policy']:>9} {r['injected_latency_ms']:>8} {p95:>9} {p99:>9} "
+            f"{err:>7} {amp:>6} {retry_pct:>7} {pool!s:>11} {flag:>9}"
         )
 
     print()
-    first_saturated_per_rps: dict[int, dict] = {}
-    for r in sorted(runs, key=lambda x: (x["rps"], x["injected_latency_ms"])):
-        if r["saturated"] and r["rps"] not in first_saturated_per_rps:
-            first_saturated_per_rps[r["rps"]] = r
+    first_saturated_per_policy: dict[str, dict] = {}
+    for r in sorted(runs, key=lambda x: (x["retry_policy"], x["rps"])):
+        key = r["retry_policy"]
+        if r["saturated"] and key not in first_saturated_per_policy:
+            first_saturated_per_policy[key] = r
 
-    if first_saturated_per_rps:
-        print("First saturation point per RPS:")
-        for rps, r in sorted(first_saturated_per_rps.items()):
-            print(f"  rps={rps}: latency={r['injected_latency_ms']}ms ({r['saturation_reasons']})")
+    if first_saturated_per_policy:
+        print("First saturation (collapse) point per retry policy:")
+        for policy, r in sorted(first_saturated_per_policy.items()):
+            print(
+                f"  {policy}: rps={r['rps']} latency={r['injected_latency_ms']}ms "
+                f"amp={r['amplification_factor']:.2f} ({r['saturation_reasons']})"
+                if r["amplification_factor"] is not None
+                else f"  {policy}: rps={r['rps']} latency={r['injected_latency_ms']}ms ({r['saturation_reasons']})"
+            )
     else:
         print("No runs crossed the saturation thresholds.")
 
@@ -124,16 +149,22 @@ def write_csv(runs: list[dict], path: Path) -> None:
         "run_id",
         "rps",
         "injected_latency_ms",
+        "retry_policy",
         "throughput_rps",
         "error_rate",
         "p95_latency_ms",
         "p99_latency_ms",
-        "app_pool_active_max",
-        "app_in_flight_max",
-        "app_pool_wait_p95_ms_max",
-        "app_pool_timeout_count",
-        "app_query_timeout_count",
-        "app_error_count",
+        "amplification_factor",
+        "retry_rate",
+        "retry_success_rate",
+        "a_offered_count",
+        "a_timeout_count",
+        "a_upstream_error_count",
+        "b_received_count",
+        "b_pool_active_max",
+        "b_pool_timeout_count",
+        "b_query_timeout_count",
+        "b_error_count",
         "saturated",
         "saturation_reasons",
     ]
