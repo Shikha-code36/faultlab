@@ -40,6 +40,25 @@ services:
   service-a:
     build: ./services/service-a
     environment:
+      SERVICE_B_URL: http://service-b:8000/work
+      HTTP_TIMEOUT: "2.0"
+      RETRY_POLICY: "none"
+      RETRY_BACKOFF_MIN_MS: "50"
+      RETRY_BACKOFF_MAX_MS: "100"
+    ports:
+      - "8000:8000"
+    depends_on:
+      service-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  service-b:
+    build: ./services/service-b
+    environment:
       DB_HOST: toxiproxy
       DB_PORT: "5433"
       DB_USER: faultlab
@@ -50,7 +69,7 @@ services:
       POOL_ACQUIRE_TIMEOUT: "2.0"
       QUERY_TIMEOUT: "2.0"
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       toxiproxy-init:
         condition: service_completed_successfully

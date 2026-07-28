@@ -4,28 +4,26 @@ from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 # Standard Prometheus surface, exposed at /metrics for any external tooling.
 REQUEST_LATENCY = Histogram(
-    "service_a_request_latency_seconds",
-    "End-to-end request latency, including retries against Service B",
+    "service_b_request_latency_seconds",
+    "End-to-end request latency",
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
 )
-IN_FLIGHT = Gauge("service_a_in_flight_requests", "Requests currently being handled")
-TIMEOUTS = Counter(
-    "service_a_timeouts_total",
-    "Requests where every attempt against Service B timed out",
+IN_FLIGHT = Gauge("service_b_in_flight_requests", "Requests currently being handled")
+POOL_WAIT = Histogram(
+    "service_b_pool_wait_seconds",
+    "Time spent waiting to acquire a DB connection from the pool",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5),
 )
-UPSTREAM_ERRORS = Counter(
-    "service_a_upstream_errors_total",
-    "Requests where Service B returned a 5xx on every attempt",
+POOL_TIMEOUTS = Counter(
+    "service_b_pool_timeouts_total",
+    "Requests that timed out waiting to acquire a DB connection (pool exhaustion)",
 )
-ERRORS = Counter("service_a_errors_total", "Requests that errored for other reasons")
-SUCCESSES = Counter("service_a_successes_total", "Requests that succeeded")
-RETRIES = Counter(
-    "service_a_retries_total", "Retry attempts made against Service B"
+QUERY_TIMEOUTS = Counter(
+    "service_b_query_timeouts_total",
+    "Requests that timed out waiting for the query itself (slow DB)",
 )
-RETRY_SUCCESSES = Counter(
-    "service_a_retry_successes_total",
-    "Requests that succeeded only after at least one retry",
-)
+ERRORS = Counter("service_b_errors_total", "Requests that errored")
+SUCCESSES = Counter("service_b_successes_total", "Requests that succeeded")
 
 
 class Metrics:
@@ -41,20 +39,19 @@ class Metrics:
         self.in_flight = 0
         self.total_count = 0
         self.success_count = 0
-        self.timeout_count = 0
-        self.upstream_error_count = 0
+        self.pool_timeout_count = 0
+        self.query_timeout_count = 0
         self.error_count = 0
-        self.retry_count = 0
-        self.retry_success_count = 0
         # Each entry: (timestamp, latency_seconds)
         self._latency_events: list[tuple[float, float]] = []
+        self._pool_wait_events: list[tuple[float, float]] = []
 
     def request_started(self) -> None:
         self.in_flight += 1
         IN_FLIGHT.set(self.in_flight)
 
     def request_finished(
-        self, latency_seconds: float, outcome: str, retries: int
+        self, latency_seconds: float, outcome: str, pool_wait_seconds: float | None
     ) -> None:
         self.in_flight -= 1
         IN_FLIGHT.set(self.in_flight)
@@ -64,22 +61,19 @@ class Metrics:
         self._latency_events.append((now, latency_seconds))
         REQUEST_LATENCY.observe(latency_seconds)
 
-        if retries:
-            self.retry_count += retries
-            RETRIES.inc(retries)
+        if pool_wait_seconds is not None:
+            self._pool_wait_events.append((now, pool_wait_seconds))
+            POOL_WAIT.observe(pool_wait_seconds)
 
         if outcome == "success":
             self.success_count += 1
             SUCCESSES.inc()
-            if retries:
-                self.retry_success_count += 1
-                RETRY_SUCCESSES.inc()
-        elif outcome == "timeout":
-            self.timeout_count += 1
-            TIMEOUTS.inc()
-        elif outcome == "upstream_error":
-            self.upstream_error_count += 1
-            UPSTREAM_ERRORS.inc()
+        elif outcome == "pool_timeout":
+            self.pool_timeout_count += 1
+            POOL_TIMEOUTS.inc()
+        elif outcome == "query_timeout":
+            self.query_timeout_count += 1
+            QUERY_TIMEOUTS.inc()
         elif outcome == "error":
             self.error_count += 1
             ERRORS.inc()
@@ -90,6 +84,8 @@ class Metrics:
         cutoff = now - self.window_seconds
         while self._latency_events and self._latency_events[0][0] < cutoff:
             self._latency_events.pop(0)
+        while self._pool_wait_events and self._pool_wait_events[0][0] < cutoff:
+            self._pool_wait_events.pop(0)
 
     @staticmethod
     def _percentile(sorted_values: list[float], pct: float) -> float | None:
@@ -102,29 +98,35 @@ class Metrics:
             return sorted_values[f]
         return sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f)
 
-    def snapshot(self) -> dict:
+    def snapshot(self, pool_active: int, pool_idle: int) -> dict:
         now = time.monotonic()
         self._trim(now)
 
         recent_latencies = sorted(v for _, v in self._latency_events)
+        recent_pool_waits = sorted(v for _, v in self._pool_wait_events)
 
         return {
             "timestamp": time.time(),
             "in_flight": self.in_flight,
+            "pool_active": pool_active,
+            "pool_idle": pool_idle,
             "cumulative": {
                 "total_count": self.total_count,
                 "success_count": self.success_count,
-                "timeout_count": self.timeout_count,
-                "upstream_error_count": self.upstream_error_count,
+                "pool_timeout_count": self.pool_timeout_count,
+                "query_timeout_count": self.query_timeout_count,
                 "error_count": self.error_count,
-                "retry_count": self.retry_count,
-                "retry_success_count": self.retry_success_count,
             },
             "recent_latency_ms": {
                 "p50": self._pct_ms(recent_latencies, 0.50),
                 "p95": self._pct_ms(recent_latencies, 0.95),
                 "p99": self._pct_ms(recent_latencies, 0.99),
                 "sample_count": len(recent_latencies),
+            },
+            "recent_pool_wait_ms": {
+                "p50": self._pct_ms(recent_pool_waits, 0.50),
+                "p95": self._pct_ms(recent_pool_waits, 0.95),
+                "sample_count": len(recent_pool_waits),
             },
         }
 

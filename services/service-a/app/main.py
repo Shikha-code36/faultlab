@@ -3,9 +3,10 @@ import random
 import time
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, HTTPException, Response
 
-from . import db
+from . import client
 from .metrics import Metrics, prometheus_payload
 
 metrics = Metrics()
@@ -15,11 +16,11 @@ ITEM_COUNT = 5000
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.pool = await db.create_pool()
+    app.state.http = httpx.AsyncClient(timeout=client.HTTP_TIMEOUT)
     try:
         yield
     finally:
-        await app.state.pool.close()
+        await app.state.http.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -32,16 +33,12 @@ async def healthz():
 
 @app.get("/internal/config")
 async def internal_config():
-    return db.pool_config()
+    return client.client_config()
 
 
 @app.get("/internal/snapshot")
 async def internal_snapshot():
-    pool = app.state.pool
-    return metrics.snapshot(
-        pool_active=pool.get_size() - pool.get_idle_size(),
-        pool_idle=pool.get_idle_size(),
-    )
+    return metrics.snapshot()
 
 
 @app.get("/metrics")
@@ -56,44 +53,49 @@ async def work(id: int | None = None):
     metrics.request_started()
     start = time.monotonic()
     outcome = "error"
-    pool_wait_seconds: float | None = None
-    acquire_start = time.monotonic()
+    retries = 0
 
     try:
-        # Acquiring a connection and running the query time out independently,
-        # so a timeout here means the pool is exhausted (saturation), while a
-        # timeout below means the query itself is slow (a slow DB) -- collapsing
-        # the two loses exactly the causal distinction this lab exists to show.
-        try:
-            async with app.state.pool.acquire(
-                timeout=db.POOL_ACQUIRE_TIMEOUT
-            ) as conn:
-                pool_wait_seconds = time.monotonic() - acquire_start
-                try:
-                    row = await asyncio.wait_for(
-                        conn.fetchrow(
-                            "SELECT id, name, value FROM items WHERE id = $1",
-                            item_id,
-                        ),
-                        timeout=db.QUERY_TIMEOUT,
-                    )
-                except asyncio.TimeoutError:
-                    outcome = "query_timeout"
-                    raise HTTPException(status_code=504, detail="query timed out")
-        except asyncio.TimeoutError:
-            pool_wait_seconds = time.monotonic() - acquire_start
-            outcome = "pool_timeout"
-            raise HTTPException(status_code=503, detail="pool acquire timed out")
+        response: httpx.Response | None = None
+        last_exc: Exception | None = None
 
-        if row is None:
+        for attempt in range(client.MAX_ATTEMPTS):
+            if attempt > 0:
+                retries += 1
+                if client.RETRY_POLICY == "backoff":
+                    delay_ms = random.uniform(
+                        client.RETRY_BACKOFF_MIN_MS, client.RETRY_BACKOFF_MAX_MS
+                    )
+                    await asyncio.sleep(delay_ms / 1000)
+
+            try:
+                response = await app.state.http.get(
+                    client.SERVICE_B_URL, params={"id": item_id}
+                )
+                if response.status_code < 500:
+                    break
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                response = None
+
+        if response is None:
+            outcome = "timeout"
+            detail = str(last_exc) if last_exc else "upstream unavailable"
+            raise HTTPException(status_code=504, detail=detail)
+
+        if response.status_code == 404:
             raise HTTPException(status_code=404, detail="item not found")
+        if response.status_code >= 500:
+            outcome = "upstream_error"
+            raise HTTPException(status_code=response.status_code, detail="upstream error")
+        if response.status_code != 200:
+            outcome = "error"
+            raise HTTPException(
+                status_code=response.status_code, detail="unexpected upstream response"
+            )
 
         outcome = "success"
-        return {
-            "id": row["id"],
-            "name": row["name"],
-            "value": float(row["value"]),
-        }
+        return response.json()
     except HTTPException:
         raise
     except Exception as exc:
@@ -101,4 +103,4 @@ async def work(id: int | None = None):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
         latency_seconds = time.monotonic() - start
-        metrics.request_finished(latency_seconds, outcome, pool_wait_seconds)
+        metrics.request_finished(latency_seconds, outcome, retries)
