@@ -16,7 +16,14 @@ ITEM_COUNT = 5000
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.http = httpx.AsyncClient(timeout=client.HTTP_TIMEOUT)
+    app.state.http = httpx.AsyncClient(
+        timeout=client.HTTP_TIMEOUT,
+        # Default httpx limits (max_connections=100) apply the same timeout
+        # to "waiting for a pool slot" as to the request itself -- under load
+        # this makes A's own client pool the bottleneck instead of B's DB
+        # pool, which is the resource this experiment actually studies.
+        limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100),
+    )
     try:
         yield
     finally:
