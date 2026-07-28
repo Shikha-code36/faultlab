@@ -81,3 +81,9 @@ from 800ms at 5 RPS to just 100ms at 60 RPS.
 Failures were driven by connection-pool acquisition timeouts, not query
 timeouts — the collapse was caused by resource contention on the pool, not
 by the database query itself running slow.
+
+![Request latency vs injected DB latency, by RPS](experiments/figures/01_latency_propagation.png)
+
+![Error rate by RPS x injected latency](experiments/figures/02_error_rate_heatmap.png)
+
+![Saturation boundary per offered load](experiments/figures/03_saturation_boundary.png)
