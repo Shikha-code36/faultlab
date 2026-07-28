@@ -7,9 +7,11 @@ import httpx
 from fastapi import FastAPI, HTTPException, Response
 
 from . import client
+from .breaker import CircuitBreaker
 from .metrics import Metrics, prometheus_payload
 
 metrics = Metrics()
+breaker = CircuitBreaker()
 
 ITEM_COUNT = 5000
 
@@ -48,6 +50,11 @@ async def internal_snapshot():
     return metrics.snapshot()
 
 
+@app.get("/internal/breaker")
+async def internal_breaker():
+    return {"timestamp": time.time(), **breaker.snapshot()}
+
+
 @app.get("/metrics")
 async def prometheus_metrics():
     return Response(content=prometheus_payload(), media_type="text/plain")
@@ -65,6 +72,7 @@ async def work(id: int | None = None):
     try:
         response: httpx.Response | None = None
         last_exc: Exception | None = None
+        short_circuited = False
 
         for attempt in range(client.MAX_ATTEMPTS):
             if attempt > 0:
@@ -75,15 +83,29 @@ async def work(id: int | None = None):
                     )
                     await asyncio.sleep(delay_ms / 1000)
 
+            if client.BREAKER_ENABLED and not await breaker.acquire():
+                short_circuited = True
+                break
+
             try:
                 response = await app.state.http.get(
                     client.SERVICE_B_URL, params={"id": item_id}
                 )
-                if response.status_code < 500:
-                    break
+                forwarded_success = response.status_code < 500
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_exc = exc
                 response = None
+                forwarded_success = False
+
+            if client.BREAKER_ENABLED:
+                await breaker.record(forwarded_success)
+
+            if forwarded_success:
+                break
+
+        if short_circuited:
+            outcome = "short_circuited"
+            raise HTTPException(status_code=503, detail="circuit open")
 
         if response is None:
             outcome = "timeout"

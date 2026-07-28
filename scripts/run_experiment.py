@@ -1,23 +1,27 @@
 """Orchestrates one FaultLab experiment run end to end.
 
-For a single (rps, injected latency, retry policy) combination this script:
-  1. sets Service A's retry policy by recreating it with RETRY_POLICY in
-     its environment (a no-op if it's already running that policy),
+For a single (rps, injected latency, retry policy, breaker on/off)
+combination this script:
+  1. sets Service A's retry policy and circuit-breaker toggle by
+     recreating it with RETRY_POLICY / BREAKER_ENABLED in its environment
+     (a no-op if it's already running that configuration),
   2. configures Toxiproxy to inject the requested latency between
      Service B and PostgreSQL,
-  3. starts a background poller that samples both Service A's and
-     Service B's internal metrics endpoints once a second for the whole
+  3. starts a background poller that samples Service A's snapshot +
+     breaker state and Service B's snapshot once a second for the whole
      run,
   4. runs the k6 load generator against Service A for
      warmup + measure + cooldown seconds,
   5. writes run metadata, load generator results, application metrics
-     (for both services plus the derived amplification factor), proxy
-     state, and raw per-second/per-request samples to
-     experiments/runs/<run_id>/.
+     (for both services plus the derived amplification factor and
+     breaker stats), proxy state, and raw per-second/per-request samples
+     to experiments/runs/<run_id>/.
 
 Usage:
   python scripts/run_experiment.py --rps 20 --latency-ms 400 --retry-policy immediate
+  python scripts/run_experiment.py --rps 14 --latency-ms 400 --breaker on
   python scripts/run_experiment.py --phase-a
+  python scripts/run_experiment.py --exp003
   python scripts/run_experiment.py --sweep
 """
 
@@ -57,6 +61,12 @@ SWEEP_LATENCY_MS = [0, 50, 100, 200, 400, 800]
 PHASE_A_LATENCY_MS = 400
 PHASE_A_RPS = [5, 10, 20, 40, 60]
 PHASE_B_LATENCY_MS = 200
+
+# Experiment 003's locked sweep (see experiment_003 design notes): retry
+# disabled throughout, breaker off/on x RPS at the boundary Experiment 002
+# identified.
+EXP003_LATENCY_MS = 400
+EXP003_RPS = [12, 14, 16, 18]
 
 
 def http_get_json(url: str, timeout: float = 5.0) -> dict:
@@ -100,25 +110,27 @@ def set_toxic_latency(latency_ms: int) -> dict:
     return {"active": latency_ms > 0, "configured_latency_ms": latency_ms}
 
 
-def set_retry_policy(retry_policy: str) -> None:
-    """Recreate Service A with the given RETRY_POLICY if it isn't already running it.
+def set_service_a_config(retry_policy: str, breaker_enabled: bool) -> None:
+    """Recreate Service A with the given RETRY_POLICY/BREAKER_ENABLED if needed.
 
     Written to a .env file (which every `docker compose` invocation reads
     automatically) rather than passed as a one-off subprocess env var --
     run_k6() below also shells out to `docker compose run loadgen`, and
     since loadgen depends_on service-a, compose re-resolves the whole
     project against whatever environment it sees and will silently recreate
-    service-a back to the default policy if RETRY_POLICY isn't set there too.
+    service-a back to the default config if these vars aren't set there too.
     A .env file keeps every subsequent compose call consistent.
 
     docker compose only recreates a container when its resolved config
-    changed, so this is a no-op when the policy matches what's already up.
+    changed, so this is a no-op when the config matches what's already up.
     """
     current = http_get_json(f"{SERVICE_A_URL}/internal/config")
-    if current.get("retry_policy") == retry_policy:
+    if current.get("retry_policy") == retry_policy and current.get("breaker_enabled") == breaker_enabled:
         return
 
-    (REPO_ROOT / ".env").write_text(f"RETRY_POLICY={retry_policy}\n")
+    (REPO_ROOT / ".env").write_text(
+        f"RETRY_POLICY={retry_policy}\nBREAKER_ENABLED={'true' if breaker_enabled else 'false'}\n"
+    )
     subprocess.run(
         ["docker", "compose", "up", "-d", "--wait", "service-a"],
         cwd=REPO_ROOT,
@@ -149,6 +161,7 @@ class SnapshotPoller:
                     "poll_monotonic": now,
                     "a": self._poll_one(f"{SERVICE_A_URL}/internal/snapshot"),
                     "b": self._poll_one(f"{SERVICE_B_URL}/internal/snapshot"),
+                    "breaker": self._poll_one(f"{SERVICE_A_URL}/internal/breaker"),
                 }
             )
             elapsed = time.monotonic() - start
@@ -228,6 +241,11 @@ def summarize_service_a(window: list[dict]) -> dict:
 
     in_flight_values = [s["in_flight"] for s in window]
     p95_latencies = [s["recent_latency_ms"]["p95"] for s in window if s["recent_latency_ms"]["p95"] is not None]
+    open_state_p95_latencies = [
+        s["recent_short_circuit_latency_ms"]["p95"]
+        for s in window
+        if s.get("recent_short_circuit_latency_ms", {}).get("p95") is not None
+    ]
 
     first, last = window[0]["cumulative"], window[-1]["cumulative"]
 
@@ -236,6 +254,7 @@ def summarize_service_a(window: list[dict]) -> dict:
         "in_flight_max": max(in_flight_values) if in_flight_values else None,
         "in_flight_avg": sum(in_flight_values) / len(in_flight_values) if in_flight_values else None,
         "request_latency_p95_ms_max": max(p95_latencies) if p95_latencies else None,
+        "open_state_latency_p95_ms_max": max(open_state_p95_latencies) if open_state_p95_latencies else None,
         "offered_count": last["total_count"] - first["total_count"],
         "success_count": last["success_count"] - first["success_count"],
         "timeout_count": last["timeout_count"] - first["timeout_count"],
@@ -243,6 +262,26 @@ def summarize_service_a(window: list[dict]) -> dict:
         "error_count": last["error_count"] - first["error_count"],
         "retry_count": last["retry_count"] - first["retry_count"],
         "retry_success_count": last["retry_success_count"] - first["retry_success_count"],
+        "short_circuit_count": last.get("short_circuit_count", 0) - first.get("short_circuit_count", 0),
+    }
+
+
+def summarize_breaker(window: list[dict]) -> dict:
+    if not window:
+        return {"sample_count": 0}
+
+    states_seen = sorted({s["state"] for s in window})
+    first, last = window[0], window[-1]
+
+    return {
+        "sample_count": len(window),
+        "states_seen": states_seen,
+        "final_state": last["state"],
+        "open_count_in_window": last["open_count"] - first["open_count"],
+        "open_seconds_in_window": round(last["open_seconds_total"] - first["open_seconds_total"], 3),
+        "short_circuit_count_in_window": last["short_circuit_count"] - first["short_circuit_count"],
+        "probe_count_in_window": last["probe_count"] - first["probe_count"],
+        "probe_success_count_in_window": last["probe_success_count"] - first["probe_success_count"],
     }
 
 
@@ -275,9 +314,11 @@ def summarize_app_metrics(
 ) -> dict:
     window_a = _select_window(samples, "a", warmup_s, cooldown_s, measure_window)
     window_b = _select_window(samples, "b", warmup_s, cooldown_s, measure_window)
+    window_breaker = _select_window(samples, "breaker", warmup_s, cooldown_s, measure_window)
 
     service_a = summarize_service_a(window_a)
     service_b = summarize_service_b(window_b)
+    breaker = summarize_breaker(window_breaker)
 
     offered = service_a.get("offered_count")
     received = service_b.get("received_count")
@@ -288,13 +329,28 @@ def summarize_app_metrics(
         if service_a.get("success_count")
         else None
     )
+    # Probes are rare, discrete events (a handful per run), and probe_count
+    # increments when a probe is granted while probe_success_count only
+    # increments once its result arrives up to ~2s later -- so a probe that
+    # starts just before the measure window and resolves just after can make
+    # the windowed success count exceed the windowed grant count. Clamp the
+    # denominator rather than report a >100% rate from that boundary lag.
+    probe_count_in_window = breaker.get("probe_count_in_window") or 0
+    probe_success_count_in_window = breaker.get("probe_success_count_in_window") or 0
+    probe_success_rate = (
+        probe_success_count_in_window / max(probe_count_in_window, probe_success_count_in_window)
+        if (probe_count_in_window or probe_success_count_in_window)
+        else None
+    )
 
     return {
         "service_a": service_a,
         "service_b": service_b,
+        "breaker": breaker,
         "amplification_factor": amplification_factor,
         "retry_rate": retry_rate,
         "retry_success_rate": retry_success_rate,
+        "probe_success_rate": probe_success_rate,
     }
 
 
@@ -302,18 +358,23 @@ def run_experiment(
     rps: int,
     latency_ms: int,
     retry_policy: str = "none",
+    breaker_enabled: bool = False,
     warmup_s: int = DEFAULT_WARMUP_S,
     measure_s: int = DEFAULT_MEASURE_S,
     cooldown_s: int = DEFAULT_COOLDOWN_S,
     run_id: str | None = None,
 ) -> Path:
     timestamp = datetime.now(timezone.utc)
-    run_id = run_id or f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_rps{rps}_lat{latency_ms}_{retry_policy}"
+    breaker_suffix = "_breaker-on" if breaker_enabled else ""
+    run_id = (
+        run_id
+        or f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_rps{rps}_lat{latency_ms}_{retry_policy}{breaker_suffix}"
+    )
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[{run_id}] setting retry_policy={retry_policy}")
-    set_retry_policy(retry_policy)
+    print(f"[{run_id}] setting retry_policy={retry_policy} breaker_enabled={breaker_enabled}")
+    set_service_a_config(retry_policy, breaker_enabled)
 
     print(f"[{run_id}] configuring toxiproxy latency={latency_ms}ms")
     proxy_state = set_toxic_latency(latency_ms)
@@ -360,6 +421,7 @@ def run_experiment(
         "rps": rps,
         "injected_latency_ms": latency_ms,
         "retry_policy": retry_policy,
+        "breaker_enabled": breaker_enabled,
         "pool_size": b_config.get("pool_max_size"),
         "query_timeout_s": b_config.get("query_timeout"),
         "http_timeout_s": a_config.get("http_timeout"),
@@ -385,6 +447,9 @@ def main():
     parser.add_argument("--latency-ms", type=int, help="injected DB latency in ms")
     parser.add_argument(
         "--retry-policy", choices=RETRY_POLICIES, default="none", help="Service A retry policy for this run"
+    )
+    parser.add_argument(
+        "--breaker", choices=["off", "on"], default="off", help="Service A circuit breaker for this run"
     )
     parser.add_argument("--warmup-s", type=int, default=DEFAULT_WARMUP_S)
     parser.add_argument("--measure-s", type=int, default=DEFAULT_MEASURE_S)
@@ -412,6 +477,11 @@ def main():
         action="store_true",
         help="run Experiment 002 Phase B: same as Phase A but at 200ms latency (only run if Phase A shows a signal)",
     )
+    parser.add_argument(
+        "--exp003",
+        action="store_true",
+        help="run Experiment 003: 400ms latency, retries disabled, breaker off/on x RPS {12,14,16,18} (8 runs)",
+    )
     args = parser.parse_args()
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -424,6 +494,20 @@ def main():
                     rps=rps,
                     latency_ms=latency_ms,
                     retry_policy=retry_policy,
+                    warmup_s=args.warmup_s,
+                    measure_s=args.measure_s,
+                    cooldown_s=args.cooldown_s,
+                )
+        return
+
+    if args.exp003:
+        for breaker_enabled in (False, True):
+            for rps in EXP003_RPS:
+                run_experiment(
+                    rps=rps,
+                    latency_ms=EXP003_LATENCY_MS,
+                    retry_policy="none",
+                    breaker_enabled=breaker_enabled,
                     warmup_s=args.warmup_s,
                     measure_s=args.measure_s,
                     cooldown_s=args.cooldown_s,
@@ -448,12 +532,13 @@ def main():
         return
 
     if args.rps is None or args.latency_ms is None:
-        parser.error("--rps and --latency-ms are required unless --sweep/--phase-a/--phase-b is given")
+        parser.error("--rps and --latency-ms are required unless --sweep/--phase-a/--phase-b/--exp003 is given")
 
     run_experiment(
         rps=args.rps,
         latency_ms=args.latency_ms,
         retry_policy=args.retry_policy,
+        breaker_enabled=(args.breaker == "on"),
         warmup_s=args.warmup_s,
         measure_s=args.measure_s,
         cooldown_s=args.cooldown_s,

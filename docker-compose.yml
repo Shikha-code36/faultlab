@@ -45,6 +45,7 @@ services:
       RETRY_POLICY: "${RETRY_POLICY:-none}"
       RETRY_BACKOFF_MIN_MS: "50"
       RETRY_BACKOFF_MAX_MS: "100"
+      BREAKER_ENABLED: "${BREAKER_ENABLED:-false}"
     ports:
       - "8000:8000"
     depends_on:

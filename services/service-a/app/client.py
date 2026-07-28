@@ -14,6 +14,8 @@ RETRY_BACKOFF_MAX_MS = float(os.environ.get("RETRY_BACKOFF_MAX_MS", "100"))
 
 MAX_ATTEMPTS = 1 if RETRY_POLICY == "none" else 2
 
+BREAKER_ENABLED = os.environ.get("BREAKER_ENABLED", "false").lower() == "true"
+
 
 def client_config() -> dict:
     return {
@@ -23,4 +25,5 @@ def client_config() -> dict:
         "retry_backoff_min_ms": RETRY_BACKOFF_MIN_MS,
         "retry_backoff_max_ms": RETRY_BACKOFF_MAX_MS,
         "max_attempts": MAX_ATTEMPTS,
+        "breaker_enabled": BREAKER_ENABLED,
     }
