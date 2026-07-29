@@ -77,10 +77,17 @@ async def work(id: int | None = None):
         for attempt in range(client.MAX_ATTEMPTS):
             if attempt > 0:
                 retries += 1
+                delay_ms = 0.0
                 if client.RETRY_POLICY == "backoff":
                     delay_ms = random.uniform(
                         client.RETRY_BACKOFF_MIN_MS, client.RETRY_BACKOFF_MAX_MS
                     )
+                elif client.RETRY_POLICY == "full_jitter":
+                    base_ms = client.RETRY_BASE_DELAYS_MS[attempt - 1]
+                    delay_ms = random.uniform(0.0, base_ms)
+
+                if delay_ms > 0:
+                    metrics.record_retry_delay(delay_ms)
                     await asyncio.sleep(delay_ms / 1000)
 
             if client.BREAKER_ENABLED and not await breaker.acquire():

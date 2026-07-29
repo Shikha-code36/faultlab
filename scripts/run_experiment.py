@@ -51,13 +51,17 @@ DEFAULT_WARMUP_S = 30
 DEFAULT_MEASURE_S = 90
 DEFAULT_COOLDOWN_S = 15
 
-RETRY_POLICIES = ["none", "immediate", "backoff"]
+RETRY_POLICIES = ["none", "immediate", "backoff", "full_jitter"]
 
 # Week 1's flat matrix, kept for re-running the no-retry baseline topology.
 SWEEP_RPS = [5, 10, 20, 40, 60]
 SWEEP_LATENCY_MS = [0, 50, 100, 200, 400, 800]
 
 # Experiment 002's locked phased sweep (see experiment_002 design notes).
+# Deliberately its own list, not RETRY_POLICIES -- Experiment 002/003 are
+# CLOSED and their locked sweep must stay exactly {none, immediate, backoff}
+# even after full_jitter is added to RETRY_POLICIES for Experiment 004.
+PHASE_A_POLICIES = ["none", "immediate", "backoff"]
 PHASE_A_LATENCY_MS = 400
 PHASE_A_RPS = [5, 10, 20, 40, 60]
 PHASE_B_LATENCY_MS = 200
@@ -67,6 +71,13 @@ PHASE_B_LATENCY_MS = 200
 # identified.
 EXP003_LATENCY_MS = 400
 EXP003_RPS = [12, 14, 16, 18]
+
+# Experiment 004's locked sweep (see experiment_004 design notes / plan.txt):
+# retry budget raised to 3 total attempts, breaker disabled throughout,
+# arrival tracing enabled to measure retry desynchronization directly.
+EXP004_LATENCY_MS = 400
+EXP004_RPS = [12, 14, 16, 18]
+EXP004_POLICIES = ["none", "immediate", "full_jitter"]
 
 
 def http_get_json(url: str, timeout: float = 5.0) -> dict:
@@ -110,8 +121,10 @@ def set_toxic_latency(latency_ms: int) -> dict:
     return {"active": latency_ms > 0, "configured_latency_ms": latency_ms}
 
 
-def set_service_a_config(retry_policy: str, breaker_enabled: bool) -> None:
-    """Recreate Service A with the given RETRY_POLICY/BREAKER_ENABLED if needed.
+def set_experiment_config(
+    retry_policy: str, breaker_enabled: bool, enable_arrival_trace: bool = False
+) -> None:
+    """Recreate Service A / Service B with the given config if needed.
 
     Written to a .env file (which every `docker compose` invocation reads
     automatically) rather than passed as a one-off subprocess env var --
@@ -121,18 +134,30 @@ def set_service_a_config(retry_policy: str, breaker_enabled: bool) -> None:
     service-a back to the default config if these vars aren't set there too.
     A .env file keeps every subsequent compose call consistent.
 
+    Writes all three vars in one file (rather than one function per service)
+    since .env is written wholesale each time -- two separate writers would
+    silently clobber each other's variables.
+
     docker compose only recreates a container when its resolved config
-    changed, so this is a no-op when the config matches what's already up.
+    changed, so passing both services to `up` is a no-op for whichever one
+    didn't change.
     """
-    current = http_get_json(f"{SERVICE_A_URL}/internal/config")
-    if current.get("retry_policy") == retry_policy and current.get("breaker_enabled") == breaker_enabled:
+    current_a = http_get_json(f"{SERVICE_A_URL}/internal/config")
+    current_b_trace = http_get_json(f"{SERVICE_B_URL}/internal/arrival_trace")
+    if (
+        current_a.get("retry_policy") == retry_policy
+        and current_a.get("breaker_enabled") == breaker_enabled
+        and current_b_trace.get("enabled") == enable_arrival_trace
+    ):
         return
 
     (REPO_ROOT / ".env").write_text(
-        f"RETRY_POLICY={retry_policy}\nBREAKER_ENABLED={'true' if breaker_enabled else 'false'}\n"
+        f"RETRY_POLICY={retry_policy}\n"
+        f"BREAKER_ENABLED={'true' if breaker_enabled else 'false'}\n"
+        f"ENABLE_ARRIVAL_TRACE={'true' if enable_arrival_trace else 'false'}\n"
     )
     subprocess.run(
-        ["docker", "compose", "up", "-d", "--wait", "service-a"],
+        ["docker", "compose", "up", "-d", "--wait", "service-a", "service-b"],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
@@ -246,6 +271,16 @@ def summarize_service_a(window: list[dict]) -> dict:
         for s in window
         if s.get("recent_short_circuit_latency_ms", {}).get("p95") is not None
     ]
+    retry_delay_p50s = [
+        s["recent_retry_delay_ms"]["p50"]
+        for s in window
+        if s.get("recent_retry_delay_ms", {}).get("p50") is not None
+    ]
+    retry_delay_p95s = [
+        s["recent_retry_delay_ms"]["p95"]
+        for s in window
+        if s.get("recent_retry_delay_ms", {}).get("p95") is not None
+    ]
 
     first, last = window[0]["cumulative"], window[-1]["cumulative"]
 
@@ -255,6 +290,18 @@ def summarize_service_a(window: list[dict]) -> dict:
         "in_flight_avg": sum(in_flight_values) / len(in_flight_values) if in_flight_values else None,
         "request_latency_p95_ms_max": max(p95_latencies) if p95_latencies else None,
         "open_state_latency_p95_ms_max": max(open_state_p95_latencies) if open_state_p95_latencies else None,
+        # Experiment 004: rolling-window retry delay percentiles, averaged
+        # across the measure window's per-second samples (not maxed, unlike
+        # the latency fields above) -- this approximates the delay
+        # distribution actually sampled over the run, for verifying the
+        # jitter implementation matches its intended random(0, backoff)
+        # shape rather than confirming a single moment's worst case.
+        "retry_delay_p50_ms_avg": (
+            sum(retry_delay_p50s) / len(retry_delay_p50s) if retry_delay_p50s else None
+        ),
+        "retry_delay_p95_ms_avg": (
+            sum(retry_delay_p95s) / len(retry_delay_p95s) if retry_delay_p95s else None
+        ),
         "offered_count": last["total_count"] - first["total_count"],
         "success_count": last["success_count"] - first["success_count"],
         "timeout_count": last["timeout_count"] - first["timeout_count"],
@@ -359,6 +406,7 @@ def run_experiment(
     latency_ms: int,
     retry_policy: str = "none",
     breaker_enabled: bool = False,
+    enable_arrival_trace: bool = False,
     warmup_s: int = DEFAULT_WARMUP_S,
     measure_s: int = DEFAULT_MEASURE_S,
     cooldown_s: int = DEFAULT_COOLDOWN_S,
@@ -373,11 +421,17 @@ def run_experiment(
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[{run_id}] setting retry_policy={retry_policy} breaker_enabled={breaker_enabled}")
-    set_service_a_config(retry_policy, breaker_enabled)
+    print(
+        f"[{run_id}] setting retry_policy={retry_policy} breaker_enabled={breaker_enabled} "
+        f"enable_arrival_trace={enable_arrival_trace}"
+    )
+    set_experiment_config(retry_policy, breaker_enabled, enable_arrival_trace)
 
     print(f"[{run_id}] configuring toxiproxy latency={latency_ms}ms")
     proxy_state = set_toxic_latency(latency_ms)
+
+    if enable_arrival_trace:
+        http_json("POST", f"{SERVICE_B_URL}/internal/arrival_trace/reset")
 
     poller = SnapshotPoller(interval_s=1.0)
     try:
@@ -408,6 +462,15 @@ def run_experiment(
         for sample in poller.samples:
             f.write(json.dumps(sample) + "\n")
 
+    if enable_arrival_trace:
+        trace = http_get_json(f"{SERVICE_B_URL}/internal/arrival_trace")
+        arrival_trace_path = run_dir / "arrival_trace.csv"
+        with arrival_trace_path.open("w") as f:
+            f.write("arrival_ns\n")
+            for arrival_ns in trace.get("arrivals_ns", []):
+                f.write(f"{arrival_ns}\n")
+        print(f"[{run_id}] arrival trace: {trace.get('count', 0)} arrivals -> {arrival_trace_path}")
+
     summary_path = run_dir / "loadgen" / "summary.json"
     load_results = json.loads(summary_path.read_text()) if summary_path.exists() else {}
 
@@ -422,6 +485,8 @@ def run_experiment(
         "injected_latency_ms": latency_ms,
         "retry_policy": retry_policy,
         "breaker_enabled": breaker_enabled,
+        "enable_arrival_trace": enable_arrival_trace,
+        "max_attempts": a_config.get("max_attempts"),
         "pool_size": b_config.get("pool_max_size"),
         "query_timeout_s": b_config.get("query_timeout"),
         "http_timeout_s": a_config.get("http_timeout"),
@@ -482,13 +547,26 @@ def main():
         action="store_true",
         help="run Experiment 003: 400ms latency, retries disabled, breaker off/on x RPS {12,14,16,18} (8 runs)",
     )
+    parser.add_argument(
+        "--exp004",
+        action="store_true",
+        help=(
+            "run Experiment 004: 400ms latency, breaker disabled, retry budget 3 attempts, "
+            "policies {none,immediate,full_jitter} x RPS {12,14,16,18} (12 runs), arrival tracing on"
+        ),
+    )
+    parser.add_argument(
+        "--trace-arrivals",
+        action="store_true",
+        help="enable Service B's per-request arrival trace for a single --rps/--latency-ms run",
+    )
     args = parser.parse_args()
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
     if args.phase_a or args.phase_b:
         latency_ms = PHASE_B_LATENCY_MS if args.phase_b else PHASE_A_LATENCY_MS
-        for retry_policy in RETRY_POLICIES:
+        for retry_policy in PHASE_A_POLICIES:
             for rps in PHASE_A_RPS:
                 run_experiment(
                     rps=rps,
@@ -514,6 +592,21 @@ def main():
                 )
         return
 
+    if args.exp004:
+        for retry_policy in EXP004_POLICIES:
+            for rps in EXP004_RPS:
+                run_experiment(
+                    rps=rps,
+                    latency_ms=EXP004_LATENCY_MS,
+                    retry_policy=retry_policy,
+                    breaker_enabled=False,
+                    enable_arrival_trace=True,
+                    warmup_s=args.warmup_s,
+                    measure_s=args.measure_s,
+                    cooldown_s=args.cooldown_s,
+                )
+        return
+
     if args.sweep or args.rps_list or args.latency_ms_list:
         rps_values = [int(v) for v in args.rps_list.split(",")] if args.rps_list else SWEEP_RPS
         latency_values = (
@@ -532,13 +625,16 @@ def main():
         return
 
     if args.rps is None or args.latency_ms is None:
-        parser.error("--rps and --latency-ms are required unless --sweep/--phase-a/--phase-b/--exp003 is given")
+        parser.error(
+            "--rps and --latency-ms are required unless --sweep/--phase-a/--phase-b/--exp003/--exp004 is given"
+        )
 
     run_experiment(
         rps=args.rps,
         latency_ms=args.latency_ms,
         retry_policy=args.retry_policy,
         breaker_enabled=(args.breaker == "on"),
+        enable_arrival_trace=args.trace_arrivals,
         warmup_s=args.warmup_s,
         measure_s=args.measure_s,
         cooldown_s=args.cooldown_s,

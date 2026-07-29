@@ -69,6 +69,7 @@ services:
       POOL_MAX_SIZE: "10"
       POOL_ACQUIRE_TIMEOUT: "2.0"
       QUERY_TIMEOUT: "2.0"
+      ENABLE_ARRIVAL_TRACE: "${ENABLE_ARRIVAL_TRACE:-false}"
     ports:
       - "8001:8000"
     depends_on:

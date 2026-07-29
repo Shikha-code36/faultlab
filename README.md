@@ -8,10 +8,11 @@ Load Generator (k6) -> Service A (FastAPI, retry client + circuit breaker) -> Se
 ```
 
 Service A is a thin HTTP client with a configurable retry policy (none /
-immediate / retry-with-backoff) and a circuit breaker that can wrap the call
-to Service B. Service B owns the bounded connection pool and is the one
-instrumented behind Toxiproxy's injected network latency, on a real
-PostgreSQL database. Every component in the request path is real.
+immediate / retry-with-backoff / exponential backoff with full jitter) and a
+circuit breaker that can wrap the call to Service B. Service B owns the
+bounded connection pool and is the one instrumented behind Toxiproxy's
+injected network latency, on a real PostgreSQL database. Every component in
+the request path is real.
 
 ## Current experiments
 
@@ -20,6 +21,7 @@ PostgreSQL database. Every component in the request path is real.
 | [001 — dependency latency](#experiment-001--database-latency-propagation) | closed | Injected DB latency propagates harmlessly until the connection pool saturates; the latency needed to trigger saturation drops sharply as offered load rises. |
 | [002 — retry amplification](#experiment-002--retry-amplification) | closed | Retries roughly double load on an already-saturated dependency without increasing completed throughput, and don't measurably shift the collapse boundary. |
 | [003 — circuit breaker](#experiment-003--circuit-breaker) | closed | A minimal breaker cuts load reaching the saturated dependency by up to ~44%, cuts client-visible errors by up to ~61 points, and every recovery probe succeeded — confirming the collapse is a queueing effect, not a hard failure. |
+| [004 — retry scheduling](#experiment-004--retry-scheduling-backoff--jitter) | closed | Full jitter measurably desynchronizes retry arrivals at every saturated RPS tested, but that desynchronization doesn't move amplification, error rate, or completed throughput — a fixed-capacity pool, not burst-induced overflow, remains the dominant constraint once saturated. |
 
 ## Running the stack
 
@@ -41,12 +43,17 @@ curl http://localhost:8000/work?id=1
 python scripts/run_experiment.py --rps 20 --latency-ms 100 --retry-policy none --breaker off
 ```
 
-`--retry-policy` is `none` (default), `immediate`, or `backoff` — it sets
-Service A's retry behavior for the run. `--breaker` is `off` (default) or
-`on` — it wraps Service A's call to Service B in a circuit breaker
+`--retry-policy` is `none` (default), `immediate`, `backoff`, or
+`full_jitter` (exponential backoff with full jitter, added for Experiment
+004) — it sets Service A's retry behavior for the run. Any policy other
+than `none` gives a request up to 3 total attempts (raised from 2 for
+Experiment 004 — see that section for why). `--breaker` is `off` (default)
+or `on` — it wraps Service A's call to Service B in a circuit breaker
 (closed/open/half-open, sliding failure-rate trip, single-probe recovery).
 Retries and the breaker are independent toggles, but Experiment 003 always
 runs with retries disabled to isolate the breaker as the only variable.
+`--trace-arrivals` enables Service B's optional per-request arrival trace
+(off by default, added for Experiment 004 — see that section).
 This configures the Toxiproxy latency toxic on the Service B <-> PostgreSQL
 link, polls Service A's snapshot + breaker state and Service B's snapshot
 once a second, runs a k6 load test (30s warmup / 90s measurement / 15s
@@ -58,6 +65,7 @@ cooldown by default), and writes everything to `experiments/runs/<run_id>/`:
   `retry_success_rate` / `probe_success_rate`
 - `proxy_state.json` — the Toxiproxy configuration used
 - `raw_app_samples.jsonl` — per-second snapshots from both services plus the breaker
+- `arrival_trace.csv` — one arrival timestamp per request reaching Service B, only when `--trace-arrivals`/`--exp004` is used
 - `loadgen/summary.json`, `loadgen/raw.jsonl` — k6 summary and per-request events
 
 ## Running the full sweep
@@ -67,6 +75,7 @@ python scripts/run_experiment.py --sweep
 python scripts/run_experiment.py --phase-a   # Experiment 002: 400ms x 3 retry policies x RPS {5,10,20,40,60}
 python scripts/run_experiment.py --phase-b   # same, at 200ms
 python scripts/run_experiment.py --exp003    # Experiment 003: 400ms, retries off, breaker off/on x RPS {12,14,16,18}
+python scripts/run_experiment.py --exp004    # Experiment 004: 400ms, breaker off, {none,immediate,full_jitter} x RPS {12,14,16,18}, arrival tracing on
 ```
 
 `--sweep` runs RPS in `[5, 10, 20, 40, 60]` against injected DB latency in
@@ -211,3 +220,95 @@ drain.
 ![Error rate vs offered load, breaker off vs on](experiments/figures/06_003_error_rate_breaker.png)
 
 ![Requests reaching Service B, breaker off vs on](experiments/figures/07_003_b_received_breaker.png)
+
+## Experiment 004 — retry scheduling (backoff + jitter)
+
+**Question.** Experiment 002 showed immediate retries add ~2x load on an
+already-saturated dependency without adding completed throughput. Is the
+problem retrying itself, or specifically *how* retries are scheduled? Can
+exponential backoff with full jitter desynchronize retry waves and reduce
+that overload, compared to immediate retries?
+
+**Method.** Same topology as Experiment 002 (breaker absent, not just off —
+combining it with retry scheduling would confound which mechanism caused
+any change). Two changes from Experiment 002's setup, both deliberate:
+
+- **Retry budget raised from 2 to 3 total attempts.** With a single retry,
+  comparing scheduling policies only compares one delay's length — jitter's
+  actual purpose (decorrelating a *wave* of clients across multiple rounds)
+  never gets exercised. Three attempts is the minimum that creates more
+  than one retry wave while staying bounded.
+- **A new optional per-request arrival trace at Service B** (`arrival_ns`
+  only — no payload, no headers, no request ID; gated behind
+  `--trace-arrivals`/`--exp004`, off by default so Experiments 001-003 are
+  unaffected). The existing ~1Hz snapshot polling can't distinguish a
+  synchronized retry burst from a smoothed one, since a 100-200ms backoff
+  schedule lives entirely inside one polling bucket — without this trace,
+  the experiment could only measure the hypothesis's *outcome*, not its
+  claimed *mechanism*.
+
+Three retry policies — `none`, `immediate`, `full_jitter` (100ms/200ms
+exponential base, full jitter: `random(0, base)`) — swept across the exact
+RPS boundary Experiments 002/003 identified (12/14/16/18) at a fixed 400ms
+injected latency, 12 runs (`experiments/summary_004.csv`). Fixed backoff
+was deliberately excluded from this sweep: it shifts a retry wave in time
+without spreading it, so it doesn't test the desynchronization mechanism
+under investigation.
+
+**Finding.** The outcome metrics replicate Experiment 002 almost exactly.
+The collapse boundary is unchanged — still exactly RPS 12 → 14 for all
+three policies. `immediate` and `full_jitter` are statistically
+indistinguishable on amplification (~3.0x, tracking the new 3-attempt
+budget), client-visible error rate (~99.6-99.9%), and Service B's completed
+throughput, which stays flat around 1,100-1,110 requests per 90s window
+regardless of policy:
+
+| RPS | Policy | Error rate | Amplification | B completed |
+|---|---|---|---|---|
+| 12 | all three | 0% | 1.00 | ~1,062 |
+| 14 | `immediate` / `full_jitter` | ~99.9% | ~3.00 | ~1,105 |
+| 16 | `immediate` / `full_jitter` | ~99.9% | ~2.99 | ~1,100 |
+| 18 | `immediate` / `full_jitter` | ~99.6-99.9% | ~2.98-2.99 | ~1,108 |
+
+Taken alone, that would read as "jitter didn't help" — not a very
+interesting result. The arrival trace is what makes this a stronger
+finding than that. Bucketing each run's arrival trace into 25ms windows and
+computing the coefficient of variation (a burstiness measure — lower means
+smoother, more evenly spread arrivals) shows full_jitter consistently,
+monotonically reducing burstiness at every saturated RPS tested:
+
+| RPS | `immediate` arrival CV | `full_jitter` arrival CV |
+|---|---|---|
+| 14 | 1.499 | 1.196 |
+| 16 | 1.275 | 1.082 |
+| 18 | 1.308 | 1.027 |
+
+So the experiment answered two separate questions, not one. **Does full
+jitter desynchronize retries? Yes, consistently.** **Does that
+desynchronization improve system-level outcomes? No — not in this system.**
+The results are consistent with the fixed-size connection pool remaining
+the dominant bottleneck after saturation: although full jitter reduced
+arrival burstiness, the throughput ceiling stayed unchanged, suggesting
+that smoothing arrivals alone was insufficient to overcome the resource
+constraint. Once Service B's 10-connection pool is the binding constraint,
+a smoother arrival pattern still funnels into the same fixed-rate drain —
+retries add the same ~3x wasted load either way, just spread out
+differently in time.
+
+This closes the four-experiment arc that opened with Experiment 001:
+001 identified the mechanism (pool saturation), 002 showed a plausible
+mitigation makes things worse (naive retries amplify without helping), 003
+showed a mitigation that works (fail-fast + probe), and 004 verified that a
+second plausible mitigation's proposed mechanism is real — full jitter
+does desynchronize retries — while showing that mechanism alone doesn't
+overcome a fixed-capacity bottleneck. Eliminating a plausible hypothesis
+with direct mechanistic evidence, not just an absence of effect, is why
+this counts as a completed result rather than an inconclusive one.
+
+![Error rate vs offered load, by retry policy](experiments/figures/08_004_error_rate_by_policy.png)
+
+![Amplification factor vs offered load, by retry policy](experiments/figures/09_004_amplification_by_policy.png)
+
+![Completed throughput vs offered load, by retry policy](experiments/figures/10_004_completed_throughput_by_policy.png)
+
+![Arrival burstiness (coefficient of variation, 25ms buckets) at Service B: immediate vs. full_jitter — lower is smoother, more desynchronized arrivals](experiments/figures/11_004_arrival_burst_cv.png)

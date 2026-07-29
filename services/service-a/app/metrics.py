@@ -30,6 +30,11 @@ SHORT_CIRCUITS = Counter(
     "service_a_short_circuits_total",
     "Requests failed fast by the circuit breaker without reaching Service B",
 )
+RETRY_DELAY = Histogram(
+    "service_a_retry_delay_ms",
+    "Sampled delay actually slept before a retry attempt (Experiment 004)",
+    buckets=(5, 10, 25, 50, 75, 100, 150, 200, 250, 500),
+)
 
 
 class Metrics:
@@ -57,10 +62,20 @@ class Metrics:
         # breaker is failing fast (near-zero) rather than blending it into
         # the overall latency distribution.
         self._short_circuit_latency_events: list[tuple[float, float]] = []
+        # Each entry: (timestamp, delay_ms). Stored in ms (not seconds, unlike
+        # the latency event lists above) since these come directly from the
+        # sampled retry delay -- see Experiment 004 design decision 2.
+        self._retry_delay_events: list[tuple[float, float]] = []
 
     def request_started(self) -> None:
         self.in_flight += 1
         IN_FLIGHT.set(self.in_flight)
+
+    def record_retry_delay(self, delay_ms: float) -> None:
+        now = time.monotonic()
+        self._retry_delay_events.append((now, delay_ms))
+        RETRY_DELAY.observe(delay_ms)
+        self._trim(now)
 
     def request_finished(
         self, latency_seconds: float, outcome: str, retries: int
@@ -108,6 +123,8 @@ class Metrics:
             and self._short_circuit_latency_events[0][0] < cutoff
         ):
             self._short_circuit_latency_events.pop(0)
+        while self._retry_delay_events and self._retry_delay_events[0][0] < cutoff:
+            self._retry_delay_events.pop(0)
 
     @staticmethod
     def _percentile(sorted_values: list[float], pct: float) -> float | None:
@@ -128,6 +145,7 @@ class Metrics:
         recent_short_circuit_latencies = sorted(
             v for _, v in self._short_circuit_latency_events
         )
+        recent_retry_delays_ms = sorted(v for _, v in self._retry_delay_events)
 
         return {
             "timestamp": time.time(),
@@ -152,11 +170,20 @@ class Metrics:
                 "p95": self._pct_ms(recent_short_circuit_latencies, 0.95),
                 "sample_count": len(recent_short_circuit_latencies),
             },
+            "recent_retry_delay_ms": {
+                "p50": self._pct_already_ms(recent_retry_delays_ms, 0.50),
+                "p95": self._pct_already_ms(recent_retry_delays_ms, 0.95),
+                "sample_count": len(recent_retry_delays_ms),
+            },
         }
 
     def _pct_ms(self, sorted_values: list[float], pct: float) -> float | None:
         v = self._percentile(sorted_values, pct)
         return round(v * 1000, 3) if v is not None else None
+
+    def _pct_already_ms(self, sorted_values: list[float], pct: float) -> float | None:
+        v = self._percentile(sorted_values, pct)
+        return round(v, 3) if v is not None else None
 
 
 def prometheus_payload() -> bytes:
