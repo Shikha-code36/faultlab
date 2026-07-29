@@ -36,6 +36,7 @@ TOXIC_NAME = "latency_downstream"
 DEFAULT_WARMUP_S = 30
 DEFAULT_MEASURE_S = 90
 DEFAULT_COOLDOWN_S = 15
+DEFAULT_POOL_SIZE = 10  # matches docker-compose.yml's POOL_MAX_SIZE default
 
 
 def http_get_json(url: str, timeout: float = 5.0) -> dict:
@@ -80,7 +81,10 @@ def set_toxic_latency(latency_ms: int) -> dict:
 
 
 def set_experiment_config(
-    retry_policy: str, breaker_enabled: bool, enable_arrival_trace: bool = False
+    retry_policy: str,
+    breaker_enabled: bool,
+    enable_arrival_trace: bool = False,
+    pool_size: int = DEFAULT_POOL_SIZE,
 ) -> None:
     """Recreate Service A / Service B with the given config if needed.
 
@@ -97,11 +101,13 @@ def set_experiment_config(
     didn't change.
     """
     current_a = http_get_json(f"{SERVICE_A_URL}/internal/config")
+    current_b = http_get_json(f"{SERVICE_B_URL}/internal/config")
     current_b_trace = http_get_json(f"{SERVICE_B_URL}/internal/arrival_trace")
     if (
         current_a.get("retry_policy") == retry_policy
         and current_a.get("breaker_enabled") == breaker_enabled
         and current_b_trace.get("enabled") == enable_arrival_trace
+        and current_b.get("pool_max_size") == pool_size
     ):
         return
 
@@ -109,6 +115,7 @@ def set_experiment_config(
         f"RETRY_POLICY={retry_policy}\n"
         f"BREAKER_ENABLED={'true' if breaker_enabled else 'false'}\n"
         f"ENABLE_ARRIVAL_TRACE={'true' if enable_arrival_trace else 'false'}\n"
+        f"POOL_MAX_SIZE={pool_size}\n"
     )
     subprocess.run(
         ["docker", "compose", "up", "-d", "--wait", "service-a", "service-b"],
@@ -371,6 +378,7 @@ class Runner:
         retry_policy: str = "none",
         breaker_enabled: bool = False,
         enable_arrival_trace: bool = False,
+        pool_size: int = DEFAULT_POOL_SIZE,
         warmup_s: int = DEFAULT_WARMUP_S,
         measure_s: int = DEFAULT_MEASURE_S,
         cooldown_s: int = DEFAULT_COOLDOWN_S,
@@ -378,18 +386,20 @@ class Runner:
     ) -> Path:
         timestamp = datetime.now(timezone.utc)
         breaker_suffix = "_breaker-on" if breaker_enabled else ""
+        pool_suffix = f"_pool{pool_size}" if pool_size != DEFAULT_POOL_SIZE else ""
         run_id = (
             run_id
-            or f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_rps{rps}_lat{latency_ms}_{retry_policy}{breaker_suffix}"
+            or f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_rps{rps}_lat{latency_ms}_{retry_policy}{breaker_suffix}{pool_suffix}"
         )
         run_dir = self.runs_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 
         print(
             f"[{self.experiment_id}/{run_id}] setting retry_policy={retry_policy} "
-            f"breaker_enabled={breaker_enabled} enable_arrival_trace={enable_arrival_trace}"
+            f"breaker_enabled={breaker_enabled} enable_arrival_trace={enable_arrival_trace} "
+            f"pool_size={pool_size}"
         )
-        set_experiment_config(retry_policy, breaker_enabled, enable_arrival_trace)
+        set_experiment_config(retry_policy, breaker_enabled, enable_arrival_trace, pool_size)
 
         print(f"[{self.experiment_id}/{run_id}] configuring toxiproxy latency={latency_ms}ms")
         proxy_state = set_toxic_latency(latency_ms)
