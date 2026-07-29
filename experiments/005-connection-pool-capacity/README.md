@@ -1,6 +1,6 @@
 # Experiment 005 -- Connection pool capacity as the collapse lever
 
-**Status.** open
+**Status.** closed
 
 **Question.** Experiments 001-004 all converged on Service B's fixed
 10-connection pool as the binding constraint once the system saturates,
@@ -84,4 +84,63 @@ narrowing.
    every run (retries are off); if it doesn't, something's misconfigured,
    not a genuine result.
 
-**Finding.** _TODO: fill in once the experiment is closed._
+**Finding.** The collapse boundary scales exactly linearly with pool size
+across the entire range tested, with no measurable curvature between the
+two doublings:
+
+| pool_size | last clean RPS (0% error) | first collapse RPS | ratio to pool_size |
+|---|---|---|---|
+| 10 | 12 | 14 | 1.4 |
+| 20 | 24 | 28 | 1.4 |
+| 40 | 48 | 56 | 1.4 |
+
+Doubling the pool from 10 to 20 exactly doubled both edges (12->24,
+14->28); doubling again from 20 to 40 did the same (24->48, 28->56). The
+pool=10 control also reproduced Experiments 002-004's known boundary
+(clean at 12, collapsed at 14) exactly, confirming this environment
+behaved consistently with prior runs. Within the 10-40 range, this is
+clean evidence for the **pool-limited regime**: no sign yet of the
+bottleneck relocating to Postgres, the network, or anywhere else. The
+**bottleneck-relocated regime was not observed** in this range -- whether
+it exists closer to Postgres's default 100-connection ceiling remains
+open (see Limitations).
+
+**Throughput at collapse.** At each pool size's clean edge (RPS 12/24/48),
+100% of offered requests succeeded end to end, and Service B's completed
+query count (`b_success_count`) exactly matched what was offered (1064,
+2129, 4258 -- again scaling 2x per pool doubling). At each pool size's
+collapse point one step later (RPS 14/28/56), client-visible success
+collapsed to near zero regardless of pool size -- 0.00%, 0.16%, 0.22%
+respectively -- while Service B's completed query count stayed level or
+rose slightly (1105, 2210, 4428). The database kept completing roughly
+the same amount of real work; it just stopped mattering, because
+virtually none of those completions arrived before Service A's 2-second
+HTTP timeout (p95/p99 latency at every collapse point sits at ~2005ms,
+just past that threshold). This is the same queueing mechanism
+Experiment 001 identified and Experiment 003 confirmed was not a hard
+failure -- a bigger pool does not soften the collapse's effect on
+client-visible throughput, it only moves the RPS at which the same
+all-or-nothing collapse occurs.
+
+**A methodological note on "saturated."** The shared saturation check
+(`error_rate > 0` OR any pool timeout OR `pool_active_max >= pool_size`)
+flags the *first* of these three conditions to trip, which turned out to
+be "pool reached full utilization with zero errors" (RPS 12/24/48) at
+every pool size here -- one sweep step before the actual error-rate
+collapse (RPS 14/28/56). Both are real signals, but they mean different
+things: one is "no spare capacity, still fine," the other is "already
+collapsed." The table above reports both explicitly rather than relying
+on `analyze()`'s single first-saturation pick, which would have
+understated how sharp the actual collapse is.
+
+**Limitations.**
+- This experiment cannot speak to pool sizes beyond 40. Since Postgres's
+  `max_connections` stayed at its default 100 throughout, a bottleneck
+  relocation might appear at some pool size well above 40 -- extending the
+  sweep toward that ceiling (a candidate Experiment 006, not a Phase B of
+  this one, since there is no transition here to bracket) would be needed
+  to observe the second regime this hypothesis predicted but that this
+  data doesn't reach.
+- Only one injected latency (400ms) and one topology (retries/breaker
+  off) were tested; whether the exact 1.4 RPS-per-connection ratio holds
+  at other latencies wasn't checked here.

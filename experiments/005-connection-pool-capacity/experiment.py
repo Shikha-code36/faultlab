@@ -8,7 +8,7 @@ METADATA = ExperimentMetadata(
     id="005",
     slug="connection-pool-capacity",
     title="Connection pool capacity as the collapse lever",
-    status="open",
+    status="closed",
     question=(
         "Experiments 001-004 all converged on Service B's fixed 10-connection pool as "
         "the binding constraint once the system saturates, but none of them varied it. "
