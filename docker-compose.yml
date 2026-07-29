@@ -70,6 +70,7 @@ services:
       POOL_ACQUIRE_TIMEOUT: "2.0"
       QUERY_TIMEOUT: "2.0"
       ENABLE_ARRIVAL_TRACE: "${ENABLE_ARRIVAL_TRACE:-false}"
+      ADMISSION_CONTROL_ENABLED: "${ADMISSION_CONTROL_ENABLED:-false}"
     ports:
       - "8001:8000"
     depends_on:

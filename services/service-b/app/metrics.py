@@ -24,6 +24,10 @@ QUERY_TIMEOUTS = Counter(
 )
 ERRORS = Counter("service_b_errors_total", "Requests that errored")
 SUCCESSES = Counter("service_b_successes_total", "Requests that succeeded")
+ADMISSION_REJECTED = Counter(
+    "service_b_admission_rejected_total",
+    "Requests rejected by admission control before attempting to acquire a DB connection",
+)
 
 
 class Metrics:
@@ -42,9 +46,25 @@ class Metrics:
         self.pool_timeout_count = 0
         self.query_timeout_count = 0
         self.error_count = 0
+        self.admission_rejected_count = 0
         # Each entry: (timestamp, latency_seconds)
         self._latency_events: list[tuple[float, float]] = []
         self._pool_wait_events: list[tuple[float, float]] = []
+        self._admission_rejected_latency_events: list[tuple[float, float]] = []
+
+    def admission_rejected(self, latency_seconds: float) -> None:
+        """A request rejected by admission control before ever calling
+        pool.acquire() -- tracked separately from request_started/finished
+        so it never touches in_flight or the pool_timeout/error/success
+        outcome counts. Kept distinct from generic errors so a rejection's
+        near-instant latency can be verified directly rather than being
+        folded into the same latency distribution as slow collapse-path
+        failures."""
+        now = time.monotonic()
+        self.admission_rejected_count += 1
+        self._admission_rejected_latency_events.append((now, latency_seconds))
+        ADMISSION_REJECTED.inc()
+        self._trim(now)
 
     def request_started(self) -> None:
         self.in_flight += 1
@@ -86,6 +106,8 @@ class Metrics:
             self._latency_events.pop(0)
         while self._pool_wait_events and self._pool_wait_events[0][0] < cutoff:
             self._pool_wait_events.pop(0)
+        while self._admission_rejected_latency_events and self._admission_rejected_latency_events[0][0] < cutoff:
+            self._admission_rejected_latency_events.pop(0)
 
     @staticmethod
     def _percentile(sorted_values: list[float], pct: float) -> float | None:
@@ -104,6 +126,7 @@ class Metrics:
 
         recent_latencies = sorted(v for _, v in self._latency_events)
         recent_pool_waits = sorted(v for _, v in self._pool_wait_events)
+        recent_admission_rejected_latencies = sorted(v for _, v in self._admission_rejected_latency_events)
 
         return {
             "timestamp": time.time(),
@@ -116,6 +139,7 @@ class Metrics:
                 "pool_timeout_count": self.pool_timeout_count,
                 "query_timeout_count": self.query_timeout_count,
                 "error_count": self.error_count,
+                "admission_rejected_count": self.admission_rejected_count,
             },
             "recent_latency_ms": {
                 "p50": self._pct_ms(recent_latencies, 0.50),
@@ -127,6 +151,11 @@ class Metrics:
                 "p50": self._pct_ms(recent_pool_waits, 0.50),
                 "p95": self._pct_ms(recent_pool_waits, 0.95),
                 "sample_count": len(recent_pool_waits),
+            },
+            "recent_admission_rejected_latency_ms": {
+                "p50": self._pct_ms(recent_admission_rejected_latencies, 0.50),
+                "p95": self._pct_ms(recent_admission_rejected_latencies, 0.95),
+                "sample_count": len(recent_admission_rejected_latencies),
             },
         }
 

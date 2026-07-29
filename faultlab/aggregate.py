@@ -18,6 +18,7 @@ SUMMARY_FIELDNAMES = [
     "retry_policy",
     "breaker_enabled",
     "pool_size",
+    "admission_control_enabled",
     "throughput_rps",
     "error_rate",
     "p95_latency_ms",
@@ -26,6 +27,7 @@ SUMMARY_FIELDNAMES = [
     "retry_rate",
     "retry_success_rate",
     "probe_success_rate",
+    "admission_rejection_rate",
     "a_offered_count",
     "a_timeout_count",
     "a_upstream_error_count",
@@ -35,6 +37,8 @@ SUMMARY_FIELDNAMES = [
     "b_pool_timeout_count",
     "b_query_timeout_count",
     "b_error_count",
+    "b_admission_rejected_count",
+    "b_admission_rejected_latency_p95_ms",
     "saturated",
     "saturation_reasons",
 ]
@@ -66,6 +70,7 @@ def load_runs(runs_dir: Path) -> list[dict]:
                 "retry_policy": metadata.get("retry_policy", "none"),
                 "breaker_enabled": metadata.get("breaker_enabled", False),
                 "pool_size": metadata.get("pool_size"),
+                "admission_control_enabled": metadata.get("admission_control_enabled", False),
                 "throughput_rps": load.get("throughput_rps"),
                 "error_rate": load.get("error_rate"),
                 "p95_latency_ms": (load.get("latency_ms") or {}).get("p95"),
@@ -74,6 +79,7 @@ def load_runs(runs_dir: Path) -> list[dict]:
                 "retry_rate": app.get("retry_rate"),
                 "retry_success_rate": app.get("retry_success_rate"),
                 "probe_success_rate": app.get("probe_success_rate"),
+                "admission_rejection_rate": app.get("admission_rejection_rate"),
                 "a_offered_count": service_a.get("offered_count"),
                 "a_timeout_count": service_a.get("timeout_count"),
                 "a_upstream_error_count": service_a.get("upstream_error_count"),
@@ -83,6 +89,8 @@ def load_runs(runs_dir: Path) -> list[dict]:
                 "b_pool_timeout_count": service_b.get("pool_timeout_count"),
                 "b_query_timeout_count": service_b.get("query_timeout_count"),
                 "b_error_count": service_b.get("error_count"),
+                "b_admission_rejected_count": service_b.get("admission_rejected_count"),
+                "b_admission_rejected_latency_p95_ms": service_b.get("admission_rejected_latency_p95_ms_max"),
             }
         )
     return runs

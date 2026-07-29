@@ -24,6 +24,17 @@ ITEM_COUNT = 5000
 ENABLE_ARRIVAL_TRACE = os.environ.get("ENABLE_ARRIVAL_TRACE", "false").lower() == "true"
 _arrival_trace_ns: list[int] = []
 
+# Experiment 006 only: server-side admission control, gated before ever
+# calling pool.acquire(). The signal is the pool's own instantaneous state
+# (no idle connections free) -- the same quantity every experiment since
+# 001 has used to define saturation -- not a proxy like in-flight request
+# count. Deliberately does not touch pool.acquire()'s own timeout/queueing
+# behavior for admitted requests: this is a decision made upstream of the
+# resource, not a change to how the resource itself arbitrates contention.
+# Default off so Experiments 001-005 are unaffected and this branch is a
+# true no-op when disabled.
+ADMISSION_CONTROL_ENABLED = os.environ.get("ADMISSION_CONTROL_ENABLED", "false").lower() == "true"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,7 +55,9 @@ async def healthz():
 
 @app.get("/internal/config")
 async def internal_config():
-    return db.pool_config()
+    config = db.pool_config()
+    config["admission_control_enabled"] = ADMISSION_CONTROL_ENABLED
+    return config
 
 
 @app.get("/internal/snapshot")
@@ -82,6 +95,14 @@ async def work(id: int | None = None):
 
     if ENABLE_ARRIVAL_TRACE:
         _arrival_trace_ns.append(time.monotonic_ns())
+
+    if ADMISSION_CONTROL_ENABLED:
+        admission_check_start = time.monotonic()
+        pool = app.state.pool
+        pool_active = pool.get_size() - pool.get_idle_size()
+        if pool_active >= db.POOL_MAX_SIZE:
+            metrics.admission_rejected(time.monotonic() - admission_check_start)
+            raise HTTPException(status_code=503, detail="admission rejected: pool at capacity")
 
     metrics.request_started()
     start = time.monotonic()

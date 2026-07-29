@@ -1,7 +1,6 @@
 __pycache__/
 *.pyc
 .venv/
-plan.txt
 .env
 
 experiments/runs/*

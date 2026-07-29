@@ -39,6 +39,27 @@ DEFAULT_COOLDOWN_S = 15
 DEFAULT_POOL_SIZE = 10  # matches docker-compose.yml's POOL_MAX_SIZE default
 
 
+def _git_commit_info() -> dict:
+    """The commit a run was executed against, plus whether the working
+    tree was dirty at that moment. This is what makes it valid to omit a
+    `version` field from ExperimentMetadata (see faultlab/experiment.py) --
+    that reasoning only holds if a run's metadata actually records which
+    commit it ran against, rather than assuming it can be reconstructed
+    after the fact."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+            ).stdout.strip()
+        )
+        return {"commit": commit, "dirty": dirty}
+    except Exception:
+        return {"commit": None, "dirty": None}
+
+
 def http_get_json(url: str, timeout: float = 5.0) -> dict:
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return json.loads(resp.read())
@@ -85,6 +106,7 @@ def set_experiment_config(
     breaker_enabled: bool,
     enable_arrival_trace: bool = False,
     pool_size: int = DEFAULT_POOL_SIZE,
+    admission_control_enabled: bool = False,
 ) -> None:
     """Recreate Service A / Service B with the given config if needed.
 
@@ -108,6 +130,7 @@ def set_experiment_config(
         and current_a.get("breaker_enabled") == breaker_enabled
         and current_b_trace.get("enabled") == enable_arrival_trace
         and current_b.get("pool_max_size") == pool_size
+        and current_b.get("admission_control_enabled") == admission_control_enabled
     ):
         return
 
@@ -116,6 +139,7 @@ def set_experiment_config(
         f"BREAKER_ENABLED={'true' if breaker_enabled else 'false'}\n"
         f"ENABLE_ARRIVAL_TRACE={'true' if enable_arrival_trace else 'false'}\n"
         f"POOL_MAX_SIZE={pool_size}\n"
+        f"ADMISSION_CONTROL_ENABLED={'true' if admission_control_enabled else 'false'}\n"
     )
     subprocess.run(
         ["docker", "compose", "up", "-d", "--wait", "service-a", "service-b"],
@@ -299,6 +323,11 @@ def summarize_service_b(window: list[dict]) -> dict:
 
     pool_active_values = [s["pool_active"] for s in window]
     pool_wait_p95 = [s["recent_pool_wait_ms"]["p95"] for s in window if s["recent_pool_wait_ms"]["p95"] is not None]
+    admission_rejected_latency_p95 = [
+        s["recent_admission_rejected_latency_ms"]["p95"]
+        for s in window
+        if s.get("recent_admission_rejected_latency_ms", {}).get("p95") is not None
+    ]
 
     first, last = window[0]["cumulative"], window[-1]["cumulative"]
 
@@ -306,11 +335,23 @@ def summarize_service_b(window: list[dict]) -> dict:
         "sample_count": len(window),
         "pool_active_max": max(pool_active_values) if pool_active_values else None,
         "pool_wait_p95_ms_max": max(pool_wait_p95) if pool_wait_p95 else None,
+        "admission_rejected_latency_p95_ms_max": (
+            max(admission_rejected_latency_p95) if admission_rejected_latency_p95 else None
+        ),
+        # received_count is requests that attempted pool.acquire() -- this
+        # is the analog of Experiment 003's "requests reaching B" metric,
+        # since here every request reaches Service B's HTTP handler
+        # regardless of admission control; only pool-acquisition attempts
+        # are meaningfully comparable to what the client-side breaker
+        # prevented from reaching B at all.
         "received_count": last["total_count"] - first["total_count"],
         "success_count": last["success_count"] - first["success_count"],
         "pool_timeout_count": last["pool_timeout_count"] - first["pool_timeout_count"],
         "query_timeout_count": last["query_timeout_count"] - first["query_timeout_count"],
         "error_count": last["error_count"] - first["error_count"],
+        "admission_rejected_count": (
+            last.get("admission_rejected_count", 0) - first.get("admission_rejected_count", 0)
+        ),
     }
 
 
@@ -351,6 +392,17 @@ def summarize_app_metrics(
         else None
     )
 
+    # Fraction of requests Service B's HTTP handler saw that were rejected
+    # by admission control before ever attempting pool.acquire(). Denominator
+    # is admission-rejected + pool-acquire-attempted, i.e. every request
+    # that reached Service B at all -- not just the ones that got in.
+    admission_rejected_count = service_b.get("admission_rejected_count") or 0
+    pool_attempted_count = service_b.get("received_count") or 0
+    reached_b_count = admission_rejected_count + pool_attempted_count
+    admission_rejection_rate = (
+        admission_rejected_count / reached_b_count if reached_b_count else None
+    )
+
     return {
         "service_a": service_a,
         "service_b": service_b,
@@ -359,6 +411,7 @@ def summarize_app_metrics(
         "retry_rate": retry_rate,
         "retry_success_rate": retry_success_rate,
         "probe_success_rate": probe_success_rate,
+        "admission_rejection_rate": admission_rejection_rate,
     }
 
 
@@ -379,6 +432,7 @@ class Runner:
         breaker_enabled: bool = False,
         enable_arrival_trace: bool = False,
         pool_size: int = DEFAULT_POOL_SIZE,
+        admission_control_enabled: bool = False,
         warmup_s: int = DEFAULT_WARMUP_S,
         measure_s: int = DEFAULT_MEASURE_S,
         cooldown_s: int = DEFAULT_COOLDOWN_S,
@@ -387,9 +441,10 @@ class Runner:
         timestamp = datetime.now(timezone.utc)
         breaker_suffix = "_breaker-on" if breaker_enabled else ""
         pool_suffix = f"_pool{pool_size}" if pool_size != DEFAULT_POOL_SIZE else ""
+        admission_suffix = "_admission-on" if admission_control_enabled else ""
         run_id = (
             run_id
-            or f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_rps{rps}_lat{latency_ms}_{retry_policy}{breaker_suffix}{pool_suffix}"
+            or f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_rps{rps}_lat{latency_ms}_{retry_policy}{breaker_suffix}{pool_suffix}{admission_suffix}"
         )
         run_dir = self.runs_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -397,9 +452,11 @@ class Runner:
         print(
             f"[{self.experiment_id}/{run_id}] setting retry_policy={retry_policy} "
             f"breaker_enabled={breaker_enabled} enable_arrival_trace={enable_arrival_trace} "
-            f"pool_size={pool_size}"
+            f"pool_size={pool_size} admission_control_enabled={admission_control_enabled}"
         )
-        set_experiment_config(retry_policy, breaker_enabled, enable_arrival_trace, pool_size)
+        set_experiment_config(
+            retry_policy, breaker_enabled, enable_arrival_trace, pool_size, admission_control_enabled
+        )
 
         print(f"[{self.experiment_id}/{run_id}] configuring toxiproxy latency={latency_ms}ms")
         proxy_state = set_toxic_latency(latency_ms)
@@ -453,15 +510,19 @@ class Runner:
             poller.samples, warmup_s, cooldown_s, measure_window=load_results.get("measure_window")
         )
 
+        git_info = _git_commit_info()
         metadata = {
             "run_id": run_id,
             "experiment_id": self.experiment_id,
             "timestamp": timestamp.isoformat(),
+            "git_commit": git_info["commit"],
+            "git_dirty": git_info["dirty"],
             "rps": rps,
             "injected_latency_ms": latency_ms,
             "retry_policy": retry_policy,
             "breaker_enabled": breaker_enabled,
             "enable_arrival_trace": enable_arrival_trace,
+            "admission_control_enabled": b_config.get("admission_control_enabled"),
             "max_attempts": a_config.get("max_attempts"),
             "pool_size": b_config.get("pool_max_size"),
             "query_timeout_s": b_config.get("query_timeout"),
