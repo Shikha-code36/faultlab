@@ -1,6 +1,6 @@
 # Experiment 006 -- Server-side admission control
 
-**Status.** open
+**Status.** closed
 
 **Question.** Experiment 003 showed a *client-side* breaker (Service A
 inferring Service B's health from aggregate failure history) cuts load
@@ -143,4 +143,72 @@ how much demand was shed at the door.
 - **Single run per condition**, consistent with every experiment so far
   (001-005) -- no repeated-trial estimate of run-to-run noise.
 
-**Finding.** _TODO: fill in once the experiment is closed._
+**Finding.** The same-session control reproduced the expected baseline
+collapse exactly: with admission control off, error rate jumps from 0%
+at RPS 12 to 99.9-100% at RPS 14-18, matching every prior experiment's
+signature (p95/p99 latency pinned at ~2005ms, the client's 2-second
+timeout). The RPS-12 validity check passed cleanly: with admission
+control on, `admission_rejection_rate` at RPS 12 was exactly 0.0 -- no
+false positives below the collapse boundary, confirming the gate reacts
+to genuine saturation, not ordinary contention.
+
+| RPS | Admission control | Error rate | b_success_count | b_admission_rejected_count | p95 latency |
+|---|---|---|---|---|---|
+| 12 | off | 0.00% | 1066 | 0 | 807ms |
+| 14 | off | 99.92% | 1108 | 0 | 2005ms |
+| 16 | off | 100.00% | 1106 | 0 | 2005ms |
+| 18 | off | 99.94% | 1107 | 0 | 2005ms |
+| 12 | on | 0.00% | 1066 | 0 | 807ms |
+| 14 | on | 16.67% | 1035 | 208 | 806ms |
+| 16 | on | 22.99% | 1094 | 330 | 806ms |
+| 18 | on | 33.31% | 1063 | 535 | 806ms |
+
+(RPS 12 shows `saturated=True` for both conditions in the raw analysis
+output because the pool reaches full utilization with zero errors there --
+the same OR-based saturation flag conflation documented in Experiment 005.
+The table above reports the real signal directly rather than relying on
+that first-tripped flag.)
+
+Three results, in order of how much they update prior findings:
+
+**Every admitted request succeeded, at every RPS tested, including well
+past the old collapse boundary.** `b_success_count` equals
+`b_received_count` exactly at every admission-on row (1035/1035,
+1094/1094, 1063/1063) -- zero pool timeouts, zero query timeouts, zero
+generic errors among requests the gate let through, up to RPS 18. With
+admission control on, client-visible failure is now *entirely* accounted
+for by clean, fast rejections (`admission_rejection_rate` at each RPS
+matches `error_rate` almost exactly: 16.73% vs 16.67%, 23.17% vs 22.99%,
+33.48% vs 33.31%) -- there is no more mystery failure component from a
+queued-then-timed-out backend. This is a materially different shape than
+Experiment 003's breaker, which still had the breaker's own trailing
+decision window and short-circuit path to reason about.
+
+**The binary collapse cliff became a load-proportional curve.** Off:
+0% -> 99.9% -> 100% -> 99.9% across RPS 12/14/16/18 -- the sharp,
+all-or-nothing collapse every experiment since 001 has shown. On: 0% ->
+16.67% -> 22.99% -> 33.31% -- still a step at the boundary itself, but
+above it, the failure rate scales roughly with how far offered load
+exceeds capacity rather than instantly maxing out. This wasn't the
+question Experiment 006 was designed to answer (that's 007/008's
+territory), but it's a concrete, quantified first data point on whether
+this architecture's collapse can be softened at all -- worth carrying
+into that design discussion rather than re-deriving from scratch.
+
+**Server-side admission control outperforms Experiment 003's client-side
+breaker at identical RPS points, substantially.** At RPS 14/16/18, 003's
+breaker-on error rates were 38.5%/58.9%/69.6%; this experiment's
+admission-on error rates at the same RPS are 16.67%/22.99%/33.31% --
+roughly half, at every comparable point. Per the hypothesis's stated
+scope, the supportable claim is that server-side placement -- which in
+this architecture inherently comes bundled with direct, instantaneous
+information about the pool's own state -- outperforms Service A's
+delayed, inferred, aggregate-failure-rate decision. This result does not
+and cannot separate "being at the resource" from "having better
+information" as independent causes, per the limitation documented above.
+
+**Limitations reaffirmed by the data.** The TOCTOU race between reading
+`pool_active` and calling `acquire()` didn't produce any visible artifact
+(every admitted request succeeded, so no evidence of a rejected-slot
+collision), but the design remains a single run per condition -- these
+numbers aren't replicated, consistent with every experiment so far.

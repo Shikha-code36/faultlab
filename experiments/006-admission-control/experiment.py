@@ -8,7 +8,7 @@ METADATA = ExperimentMetadata(
     id="006",
     slug="admission-control",
     title="Server-side admission control",
-    status="open",
+    status="closed",
     question=(
         "Does rejecting excess demand at Service B, using the pool's own "
         "real-time state, behave differently from Service A's client-side "
