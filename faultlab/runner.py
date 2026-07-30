@@ -107,6 +107,8 @@ def set_experiment_config(
     enable_arrival_trace: bool = False,
     pool_size: int = DEFAULT_POOL_SIZE,
     admission_control_enabled: bool = False,
+    admission_control_mode: str = "instantaneous",
+    admission_ewma_half_life_s: float = 2.0,
 ) -> None:
     """Recreate Service A / Service B with the given config if needed.
 
@@ -131,6 +133,8 @@ def set_experiment_config(
         and current_b_trace.get("enabled") == enable_arrival_trace
         and current_b.get("pool_max_size") == pool_size
         and current_b.get("admission_control_enabled") == admission_control_enabled
+        and current_b.get("admission_control_mode") == admission_control_mode
+        and current_b.get("admission_ewma_half_life_s") == admission_ewma_half_life_s
     ):
         return
 
@@ -140,6 +144,8 @@ def set_experiment_config(
         f"ENABLE_ARRIVAL_TRACE={'true' if enable_arrival_trace else 'false'}\n"
         f"POOL_MAX_SIZE={pool_size}\n"
         f"ADMISSION_CONTROL_ENABLED={'true' if admission_control_enabled else 'false'}\n"
+        f"ADMISSION_CONTROL_MODE={admission_control_mode}\n"
+        f"ADMISSION_EWMA_HALF_LIFE_S={admission_ewma_half_life_s}\n"
     )
     subprocess.run(
         ["docker", "compose", "up", "-d", "--wait", "service-a", "service-b"],
@@ -328,6 +334,9 @@ def summarize_service_b(window: list[dict]) -> dict:
         for s in window
         if s.get("recent_admission_rejected_latency_ms", {}).get("p95") is not None
     ]
+    admission_ewma_values = [
+        s["admission_ewma_utilization"] for s in window if s.get("admission_ewma_utilization") is not None
+    ]
 
     first, last = window[0]["cumulative"], window[-1]["cumulative"]
 
@@ -337,6 +346,15 @@ def summarize_service_b(window: list[dict]) -> dict:
         "pool_wait_p95_ms_max": max(pool_wait_p95) if pool_wait_p95 else None,
         "admission_rejected_latency_p95_ms_max": (
             max(admission_rejected_latency_p95) if admission_rejected_latency_p95 else None
+        ),
+        # Experiment 007 only: the EWMA admission controller's trailing
+        # utilization estimate over the measure window -- max/mean lets
+        # post-hoc analysis check it behaves consistently with its stated
+        # half-life (the model-fidelity gate), rather than just inferring
+        # it indirectly from rejection counts.
+        "admission_ewma_utilization_max": max(admission_ewma_values) if admission_ewma_values else None,
+        "admission_ewma_utilization_mean": (
+            sum(admission_ewma_values) / len(admission_ewma_values) if admission_ewma_values else None
         ),
         # received_count is requests that attempted pool.acquire() -- this
         # is the analog of Experiment 003's "requests reaching B" metric,
@@ -433,6 +451,8 @@ class Runner:
         enable_arrival_trace: bool = False,
         pool_size: int = DEFAULT_POOL_SIZE,
         admission_control_enabled: bool = False,
+        admission_control_mode: str = "instantaneous",
+        admission_ewma_half_life_s: float = 2.0,
         warmup_s: int = DEFAULT_WARMUP_S,
         measure_s: int = DEFAULT_MEASURE_S,
         cooldown_s: int = DEFAULT_COOLDOWN_S,
@@ -442,9 +462,10 @@ class Runner:
         breaker_suffix = "_breaker-on" if breaker_enabled else ""
         pool_suffix = f"_pool{pool_size}" if pool_size != DEFAULT_POOL_SIZE else ""
         admission_suffix = "_admission-on" if admission_control_enabled else ""
+        mode_suffix = "_ewma" if admission_control_enabled and admission_control_mode == "ewma" else ""
         run_id = (
             run_id
-            or f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_rps{rps}_lat{latency_ms}_{retry_policy}{breaker_suffix}{pool_suffix}{admission_suffix}"
+            or f"{timestamp.strftime('%Y%m%dT%H%M%SZ')}_rps{rps}_lat{latency_ms}_{retry_policy}{breaker_suffix}{pool_suffix}{admission_suffix}{mode_suffix}"
         )
         run_dir = self.runs_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -452,10 +473,17 @@ class Runner:
         print(
             f"[{self.experiment_id}/{run_id}] setting retry_policy={retry_policy} "
             f"breaker_enabled={breaker_enabled} enable_arrival_trace={enable_arrival_trace} "
-            f"pool_size={pool_size} admission_control_enabled={admission_control_enabled}"
+            f"pool_size={pool_size} admission_control_enabled={admission_control_enabled} "
+            f"admission_control_mode={admission_control_mode} admission_ewma_half_life_s={admission_ewma_half_life_s}"
         )
         set_experiment_config(
-            retry_policy, breaker_enabled, enable_arrival_trace, pool_size, admission_control_enabled
+            retry_policy,
+            breaker_enabled,
+            enable_arrival_trace,
+            pool_size,
+            admission_control_enabled,
+            admission_control_mode,
+            admission_ewma_half_life_s,
         )
 
         print(f"[{self.experiment_id}/{run_id}] configuring toxiproxy latency={latency_ms}ms")
@@ -523,6 +551,8 @@ class Runner:
             "breaker_enabled": breaker_enabled,
             "enable_arrival_trace": enable_arrival_trace,
             "admission_control_enabled": b_config.get("admission_control_enabled"),
+            "admission_control_mode": b_config.get("admission_control_mode"),
+            "admission_ewma_half_life_s": b_config.get("admission_ewma_half_life_s"),
             "max_attempts": a_config.get("max_attempts"),
             "pool_size": b_config.get("pool_max_size"),
             "query_timeout_s": b_config.get("query_timeout"),

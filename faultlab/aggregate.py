@@ -19,6 +19,8 @@ SUMMARY_FIELDNAMES = [
     "breaker_enabled",
     "pool_size",
     "admission_control_enabled",
+    "admission_control_mode",
+    "admission_ewma_half_life_s",
     "throughput_rps",
     "error_rate",
     "p95_latency_ms",
@@ -39,6 +41,8 @@ SUMMARY_FIELDNAMES = [
     "b_error_count",
     "b_admission_rejected_count",
     "b_admission_rejected_latency_p95_ms",
+    "b_admission_ewma_utilization_max",
+    "b_admission_ewma_utilization_mean",
     "saturated",
     "saturation_reasons",
 ]
@@ -71,6 +75,8 @@ def load_runs(runs_dir: Path) -> list[dict]:
                 "breaker_enabled": metadata.get("breaker_enabled", False),
                 "pool_size": metadata.get("pool_size"),
                 "admission_control_enabled": metadata.get("admission_control_enabled", False),
+                "admission_control_mode": metadata.get("admission_control_mode"),
+                "admission_ewma_half_life_s": metadata.get("admission_ewma_half_life_s"),
                 "throughput_rps": load.get("throughput_rps"),
                 "error_rate": load.get("error_rate"),
                 "p95_latency_ms": (load.get("latency_ms") or {}).get("p95"),
@@ -91,6 +97,8 @@ def load_runs(runs_dir: Path) -> list[dict]:
                 "b_error_count": service_b.get("error_count"),
                 "b_admission_rejected_count": service_b.get("admission_rejected_count"),
                 "b_admission_rejected_latency_p95_ms": service_b.get("admission_rejected_latency_p95_ms_max"),
+                "b_admission_ewma_utilization_max": service_b.get("admission_ewma_utilization_max"),
+                "b_admission_ewma_utilization_mean": service_b.get("admission_ewma_utilization_mean"),
             }
         )
     return runs

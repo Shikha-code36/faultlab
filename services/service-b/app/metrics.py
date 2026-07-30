@@ -120,7 +120,9 @@ class Metrics:
             return sorted_values[f]
         return sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f)
 
-    def snapshot(self, pool_active: int, pool_idle: int) -> dict:
+    def snapshot(
+        self, pool_active: int, pool_idle: int, admission_ewma_utilization: float | None = None
+    ) -> dict:
         now = time.monotonic()
         self._trim(now)
 
@@ -133,6 +135,11 @@ class Metrics:
             "in_flight": self.in_flight,
             "pool_active": pool_active,
             "pool_idle": pool_idle,
+            # Experiment 007 only: the EWMA admission controller's current
+            # trailing utilization estimate, exposed so post-hoc analysis
+            # can check it behaves consistently with its stated half-life
+            # (the model-fidelity gate) -- None under instantaneous mode.
+            "admission_ewma_utilization": admission_ewma_utilization,
             "cumulative": {
                 "total_count": self.total_count,
                 "success_count": self.success_count,

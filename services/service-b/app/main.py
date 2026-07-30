@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Response
 
 from . import db
+from .admission import EwmaAdmission, InstantaneousAdmission
 from .metrics import Metrics, prometheus_payload
 
 metrics = Metrics()
@@ -35,6 +36,23 @@ _arrival_trace_ns: list[int] = []
 # true no-op when disabled.
 ADMISSION_CONTROL_ENABLED = os.environ.get("ADMISSION_CONTROL_ENABLED", "false").lower() == "true"
 
+# Experiment 007: which signal drives the admission decision above --
+# "instantaneous" (006's exact mechanism, the default) or "ewma" (a trailing
+# exponentially-weighted estimate of pool utilization, half-life below).
+# Isolates information freshness as the only variable relative to 006: same
+# resource, same location, same threshold, different temporal character of
+# the input. The half-life is a stated design choice (see Experiment 007's
+# README for the derivation from measured request-service-time and warmup
+# duration), not a value Experiment 007 is trying to optimize.
+ADMISSION_CONTROL_MODE = os.environ.get("ADMISSION_CONTROL_MODE", "instantaneous")
+ADMISSION_EWMA_HALF_LIFE_S = float(os.environ.get("ADMISSION_EWMA_HALF_LIFE_S", "2.0"))
+
+_admission_controller = (
+    EwmaAdmission(half_life_s=ADMISSION_EWMA_HALF_LIFE_S)
+    if ADMISSION_CONTROL_MODE == "ewma"
+    else InstantaneousAdmission()
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,6 +75,8 @@ async def healthz():
 async def internal_config():
     config = db.pool_config()
     config["admission_control_enabled"] = ADMISSION_CONTROL_ENABLED
+    config["admission_control_mode"] = ADMISSION_CONTROL_MODE
+    config["admission_ewma_half_life_s"] = ADMISSION_EWMA_HALF_LIFE_S
     return config
 
 
@@ -66,6 +86,7 @@ async def internal_snapshot():
     return metrics.snapshot(
         pool_active=pool.get_size() - pool.get_idle_size(),
         pool_idle=pool.get_idle_size(),
+        admission_ewma_utilization=_admission_controller.current_value(),
     )
 
 
@@ -100,7 +121,7 @@ async def work(id: int | None = None):
         admission_check_start = time.monotonic()
         pool = app.state.pool
         pool_active = pool.get_size() - pool.get_idle_size()
-        if pool_active >= db.POOL_MAX_SIZE:
+        if _admission_controller.should_reject(pool_active, db.POOL_MAX_SIZE):
             metrics.admission_rejected(time.monotonic() - admission_check_start)
             raise HTTPException(status_code=503, detail="admission rejected: pool at capacity")
 
