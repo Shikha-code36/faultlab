@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Response
 
 from . import db
-from .admission import EwmaAdmission, GraduatedAdmission, InstantaneousAdmission
+from .admission import BoundedGraceAdmission, EwmaAdmission, GraduatedAdmission, InstantaneousAdmission
 from .metrics import Metrics, prometheus_payload
 
 metrics = Metrics()
@@ -33,7 +33,7 @@ _arrival_trace_ns: list[int] = []
 # Default off, same reasoning as ENABLE_ARRIVAL_TRACE: Experiments 001-007
 # are unaffected and this is a true no-op when disabled.
 ENABLE_ADMISSION_DECISION_TRACE = os.environ.get("ENABLE_ADMISSION_DECISION_TRACE", "false").lower() == "true"
-_admission_decision_trace: list[tuple[int, bool]] = []
+_admission_decision_trace: list[dict] = []
 
 # Experiment 006 only: server-side admission control, gated before ever
 # calling pool.acquire(). The signal is the pool's own instantaneous state
@@ -60,14 +60,24 @@ ADMISSION_CONTROL_ENABLED = os.environ.get("ADMISSION_CONTROL_ENABLED", "false")
 # ramps from 0 rejection probability at u_low to 1 at u=1.0 instead of
 # 006's hard step at u=1.0. u_low is a stated design choice within bounds
 # derived from Little's Law (see Experiment 008's README), not optimized.
+#
+# Experiment 009 adds a fourth mode, "bounded_grace": same resource, same
+# location, same instantaneous signal, same hard threshold as 006 -- but a
+# preliminary reject is provisional rather than final, deferred once for
+# a bounded interval before a final re-evaluation. grace_ms is a stated
+# design choice within bounds derived from interarrival time and measured
+# service time (see Experiment 009's README), not optimized.
 ADMISSION_CONTROL_MODE = os.environ.get("ADMISSION_CONTROL_MODE", "instantaneous")
 ADMISSION_EWMA_HALF_LIFE_S = float(os.environ.get("ADMISSION_EWMA_HALF_LIFE_S", "2.0"))
 ADMISSION_U_LOW = float(os.environ.get("ADMISSION_U_LOW", "0.8"))
+ADMISSION_GRACE_MS = float(os.environ.get("ADMISSION_GRACE_MS", "20.0"))
 
 if ADMISSION_CONTROL_MODE == "ewma":
     _admission_controller = EwmaAdmission(half_life_s=ADMISSION_EWMA_HALF_LIFE_S)
 elif ADMISSION_CONTROL_MODE == "graduated":
     _admission_controller = GraduatedAdmission(u_low=ADMISSION_U_LOW)
+elif ADMISSION_CONTROL_MODE == "bounded_grace":
+    _admission_controller = BoundedGraceAdmission(grace_s=ADMISSION_GRACE_MS / 1000.0)
 else:
     _admission_controller = InstantaneousAdmission()
 
@@ -96,6 +106,7 @@ async def internal_config():
     config["admission_control_mode"] = ADMISSION_CONTROL_MODE
     config["admission_ewma_half_life_s"] = ADMISSION_EWMA_HALF_LIFE_S
     config["admission_u_low"] = ADMISSION_U_LOW
+    config["admission_grace_ms"] = ADMISSION_GRACE_MS
     return config
 
 
@@ -134,10 +145,7 @@ async def internal_admission_decision_trace():
     return {
         "enabled": ENABLE_ADMISSION_DECISION_TRACE,
         "count": len(_admission_decision_trace),
-        "decisions": [
-            {"pool_active": pool_active, "rejected": rejected}
-            for pool_active, rejected in _admission_decision_trace
-        ],
+        "decisions": list(_admission_decision_trace),
     }
 
 
@@ -158,9 +166,28 @@ async def work(id: int | None = None):
         admission_check_start = time.monotonic()
         pool = app.state.pool
         pool_active = pool.get_size() - pool.get_idle_size()
-        rejected = _admission_controller.should_reject(pool_active, db.POOL_MAX_SIZE)
+
+        if ADMISSION_CONTROL_MODE == "bounded_grace":
+            def _reread_pool_active() -> int:
+                return pool.get_size() - pool.get_idle_size()
+
+            rejected, defer_info = await _admission_controller.should_reject(
+                pool_active, db.POOL_MAX_SIZE, _reread_pool_active
+            )
+        else:
+            rejected = _admission_controller.should_reject(pool_active, db.POOL_MAX_SIZE)
+            defer_info = {"deferred": False, "wait_ms": None, "pool_active_2": None}
+
         if ENABLE_ADMISSION_DECISION_TRACE:
-            _admission_decision_trace.append((pool_active, rejected))
+            _admission_decision_trace.append(
+                {
+                    "pool_active": pool_active,
+                    "rejected": rejected,
+                    "deferred": defer_info["deferred"],
+                    "wait_ms": defer_info["wait_ms"],
+                    "pool_active_2": defer_info["pool_active_2"],
+                }
+            )
         if rejected:
             metrics.admission_rejected(time.monotonic() - admission_check_start)
             raise HTTPException(status_code=503, detail="admission rejected: pool at capacity")

@@ -110,6 +110,7 @@ def set_experiment_config(
     admission_control_mode: str = "instantaneous",
     admission_ewma_half_life_s: float = 2.0,
     admission_u_low: float = 0.8,
+    admission_grace_ms: float = 20.0,
     enable_admission_decision_trace: bool = False,
 ) -> None:
     """Recreate Service A / Service B with the given config if needed.
@@ -139,6 +140,7 @@ def set_experiment_config(
         and current_b.get("admission_control_mode") == admission_control_mode
         and current_b.get("admission_ewma_half_life_s") == admission_ewma_half_life_s
         and current_b.get("admission_u_low") == admission_u_low
+        and current_b.get("admission_grace_ms") == admission_grace_ms
         and current_b_decision_trace.get("enabled") == enable_admission_decision_trace
     ):
         return
@@ -152,6 +154,7 @@ def set_experiment_config(
         f"ADMISSION_CONTROL_MODE={admission_control_mode}\n"
         f"ADMISSION_EWMA_HALF_LIFE_S={admission_ewma_half_life_s}\n"
         f"ADMISSION_U_LOW={admission_u_low}\n"
+        f"ADMISSION_GRACE_MS={admission_grace_ms}\n"
         f"ENABLE_ADMISSION_DECISION_TRACE={'true' if enable_admission_decision_trace else 'false'}\n"
     )
     subprocess.run(
@@ -461,6 +464,7 @@ class Runner:
         admission_control_mode: str = "instantaneous",
         admission_ewma_half_life_s: float = 2.0,
         admission_u_low: float = 0.8,
+        admission_grace_ms: float = 20.0,
         enable_admission_decision_trace: bool = False,
         warmup_s: int = DEFAULT_WARMUP_S,
         measure_s: int = DEFAULT_MEASURE_S,
@@ -473,7 +477,7 @@ class Runner:
         admission_suffix = "_admission-on" if admission_control_enabled else ""
         mode_suffix = (
             f"_{admission_control_mode}"
-            if admission_control_enabled and admission_control_mode in ("ewma", "graduated")
+            if admission_control_enabled and admission_control_mode in ("ewma", "graduated", "bounded_grace")
             else ""
         )
         run_id = (
@@ -488,7 +492,8 @@ class Runner:
             f"breaker_enabled={breaker_enabled} enable_arrival_trace={enable_arrival_trace} "
             f"pool_size={pool_size} admission_control_enabled={admission_control_enabled} "
             f"admission_control_mode={admission_control_mode} admission_ewma_half_life_s={admission_ewma_half_life_s} "
-            f"admission_u_low={admission_u_low} enable_admission_decision_trace={enable_admission_decision_trace}"
+            f"admission_u_low={admission_u_low} admission_grace_ms={admission_grace_ms} "
+            f"enable_admission_decision_trace={enable_admission_decision_trace}"
         )
         set_experiment_config(
             retry_policy,
@@ -499,6 +504,7 @@ class Runner:
             admission_control_mode,
             admission_ewma_half_life_s,
             admission_u_low,
+            admission_grace_ms,
             enable_admission_decision_trace,
         )
 
@@ -554,9 +560,18 @@ class Runner:
             decision_trace = http_get_json(f"{SERVICE_B_URL}/internal/admission_decision_trace")
             decision_trace_path = run_dir / "admission_decision_trace.csv"
             with decision_trace_path.open("w") as f:
-                f.write("pool_active,rejected\n")
-                for decision in decision_trace.get("decisions", []):
-                    f.write(f"{decision['pool_active']},{decision['rejected']}\n")
+                # deferred/wait_ms/pool_active_2 are only populated under
+                # Experiment 009's bounded_grace mode -- blank otherwise.
+                f.write("pool_active,rejected,deferred,wait_ms,pool_active_2\n")
+                for d in decision_trace.get("decisions", []):
+                    deferred = d.get("deferred", False)
+                    wait_ms = d.get("wait_ms")
+                    pool_active_2 = d.get("pool_active_2")
+                    f.write(
+                        f"{d['pool_active']},{d['rejected']},{deferred},"
+                        f"{'' if wait_ms is None else wait_ms},"
+                        f"{'' if pool_active_2 is None else pool_active_2}\n"
+                    )
             print(
                 f"[{self.experiment_id}/{run_id}] admission decision trace: "
                 f"{decision_trace.get('count', 0)} decisions -> {decision_trace_path}"
@@ -585,6 +600,7 @@ class Runner:
             "admission_control_mode": b_config.get("admission_control_mode"),
             "admission_ewma_half_life_s": b_config.get("admission_ewma_half_life_s"),
             "admission_u_low": b_config.get("admission_u_low"),
+            "admission_grace_ms": b_config.get("admission_grace_ms"),
             "enable_admission_decision_trace": enable_admission_decision_trace,
             "max_attempts": a_config.get("max_attempts"),
             "pool_size": b_config.get("pool_max_size"),
