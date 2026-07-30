@@ -204,6 +204,16 @@ trust, rather than silently assuming determinism that no longer holds.
 
 **Finding.**
 
+**Primary hypothesis: inconclusive.** The preregistered graduated rule
+entered the established control regime (RPS 12), so this experiment
+cannot isolate decision-rule continuity independently of admission onset.
+
+**Secondary finding: confirmed.** The implementation matched the intended
+probabilistic model exactly (Gate 1 passed), but the system operates
+close enough to saturation that even the preregistered onset
+(`u_low = 0.8`, chosen with a margin below Little's Law's own estimate)
+still caused measurable admission shedding below the collapse boundary.
+
 This experiment separates two questions that are easy to conflate:
 whether it was *built* as specified (implementation validity), and
 whether its *design assumptions held* (hypothesis validity). The first is
@@ -233,11 +243,10 @@ the established below-boundary control point. It didn't:
 0% for both `off` and `instantaneous`. The decision trace shows why: even
 at RPS 12, the pool spends a real fraction of its time at `pool_active=9`
 (u=0.9, inside the ramp), not just at or below `pool_active=8`. This is
-the same "narrow room" risk the README's Little's-Law analysis flagged
+the same "narrow room" risk the Little's-Law analysis above flagged
 *before* this experiment ran -- it just turned out to be sharper than the
-chosen margin accounted for. Per the project's methodology (see
-[[feedback_no_post_hoc_tuning]] in memory), `u_low` was not adjusted after
-seeing this; the run stands as executed against its preregistered design.
+chosen margin accounted for. `u_low` was not adjusted after seeing this
+result; the run stands as executed against its preregistered design.
 
 | RPS | off (error%) | instantaneous (error%) | graduated (error%) |
 |---|---|---|---|
@@ -282,5 +291,4 @@ parameter derived to leave a larger empirical margin below RPS 12's
 observed utilization distribution (now directly measurable from this
 experiment's own decision traces, rather than only from Little's Law's
 mean-field estimate) -- isolating continuity cleanly, the way this one
-intended to. Tracked in [[phase2_roadmap]] as future work, not scheduled
-yet.
+intended to. This is future work, not scheduled yet.
