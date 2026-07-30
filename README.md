@@ -28,6 +28,21 @@ the request path is real.
 | [008 — graduated admission onset](experiments/008-graduated-admission-onset/README.md) | closed (inconclusive on primary hypothesis) | The graduated rule's implementation was verified correct (Gate 1 passed), but the preregistered onset (`u_low=0.8`) admitted rejections below the established collapse boundary, confounding rule-shape with earlier onset — a falsified design assumption, not a bug, so whether decision-rule continuity matters on its own remains open. |
 | [009 — bounded admission deferral](experiments/009-bounded-grace-period/README.md) | closed | A single 20ms bounded postponement of a provisional reject rescues 77% of contested requests near the collapse boundary (RPS 14: 16.7%→13.1% error), but that benefit collapses to near-zero further into sustained overload (RPS 16-18) — the value of an arbitration mechanism depends on where the system sits relative to the collapse boundary, at a precisely quantified latency cost (~1 grace interval, paid by rescued and rejected requests alike). |
 
+## Reference-grade evidence
+
+Experiments under `experiments/` are **research-grade**: one causal
+question each, single run per condition, optimized for learning quickly.
+`reference/` holds a different evidence standard — **reference-grade**:
+no new causal question, replicated runs, reported variance, aimed at an
+external, skeptical reader rather than a returning collaborator. A
+reference-grade entry validates a specific claim an experiment already
+made; it never reopens or revises the original, which stays exactly as
+published.
+
+| Reference | Status | Key finding |
+|---|---|---|
+| [R001 — pool-capacity validation](reference/R001-pool-capacity-validation/README.md) | closed | Replicating the six operating points behind Experiment 005's linearity claim (5 independent runs each, 30 total, run order randomized) found the behavior remarkably stable — 0.00% error across all 15 clean-edge runs, near-total error with <0.1 percentage-point spread across all 15 collapse-point runs. This doesn't re-derive 005's boundary or ratios (the same points were deliberately re-measured, not re-searched); it shows the behavior at those points isn't an artifact of one lucky run. |
+
 ## Running the stack
 
 ```

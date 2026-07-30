@@ -9,3 +9,9 @@ experiments/runs/*
 experiments/*/runs/*
 !experiments/*/runs/.gitkeep
 
+reference/runs/*
+!reference/runs/.gitkeep
+
+reference/*/runs/*
+!reference/*/runs/.gitkeep
+

@@ -16,6 +16,8 @@ so aggregation can be scoped per experiment instead of scanning everything.
 from __future__ import annotations
 
 import json
+import os
+import platform
 import subprocess
 import sys
 import threading
@@ -58,6 +60,28 @@ def _git_commit_info() -> dict:
         return {"commit": commit, "dirty": dirty}
     except Exception:
         return {"commit": None, "dirty": None}
+
+
+def _environment_info() -> dict:
+    """Host environment a run executed on -- platform, CPU count, and
+    Docker version. Not needed to interpret a single research-grade run
+    (the git commit already pins the code), but load-bearing for
+    reference-grade evidence, where "reproduce this later" has to mean
+    something more than "same repo state" -- see reference/R001-.../README.md."""
+    try:
+        docker_version = subprocess.run(
+            ["docker", "--version"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except Exception:
+        docker_version = None
+
+    return {
+        "platform": platform.platform(),
+        "processor": platform.processor(),
+        "cpu_count": os.cpu_count(),
+        "python_version": platform.python_version(),
+        "docker_version": docker_version,
+    }
 
 
 def http_get_json(url: str, timeout: float = 5.0) -> dict:
@@ -591,6 +615,7 @@ class Runner:
             "timestamp": timestamp.isoformat(),
             "git_commit": git_info["commit"],
             "git_dirty": git_info["dirty"],
+            "environment": _environment_info(),
             "rps": rps,
             "injected_latency_ms": latency_ms,
             "retry_policy": retry_policy,

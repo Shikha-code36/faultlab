@@ -18,6 +18,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXPERIMENTS_DIR = REPO_ROOT / "experiments"
+# Reference-grade validations (e.g. R001) live in a separate top-level
+# directory, not experiments/ -- structurally distinguishing "research-grade"
+# (one causal question, single-run-per-condition unless noted) from
+# "reference-grade" (replicated, variance reported, validates a prior
+# experiment's claim rather than asking a new one) rather than relying on a
+# field someone has to remember to check.
+REFERENCE_DIR = REPO_ROOT / "reference"
 
 
 @dataclass(frozen=True)
@@ -34,6 +41,11 @@ class ExperimentMetadata:
     hypothesis: str
     primary_variable: str
     fixed_params: dict = field(default_factory=dict)
+    # "research" (default, 001-009's standard) or "reference" -- a reference-
+    # grade entry validates a specific prior claim under replication rather
+    # than asking a new causal question. Defaulted so existing experiments
+    # never need touching.
+    evidence_grade: str = "research"
 
     @property
     def dir_name(self) -> str:
@@ -44,6 +56,10 @@ class Experiment(ABC):
     """Describes one experiment's work. Never executes it directly."""
 
     metadata: ExperimentMetadata
+    # Set by load_experiment() based on which directory the definition was
+    # found in. Defaults to EXPERIMENTS_DIR so every experiment defined
+    # directly (rather than via load_experiment) keeps working unchanged.
+    base_dir: Path = EXPERIMENTS_DIR
 
     @abstractmethod
     def matrix(self) -> list[dict]:
@@ -69,7 +85,7 @@ class Experiment(ABC):
 
     @property
     def dir_path(self) -> Path:
-        return EXPERIMENTS_DIR / self.metadata.dir_name
+        return self.base_dir / self.metadata.dir_name
 
     @property
     def runs_dir(self) -> Path:
@@ -81,12 +97,22 @@ class Experiment(ABC):
 
 
 def load_experiment(experiment_id: str) -> Experiment:
-    """Locate experiments/<experiment_id>-*/experiment.py and return the
-    `experiment` instance it defines at module level."""
+    """Locate <experiment_id>-*/experiment.py under experiments/ or
+    reference/ and return the `experiment` instance it defines at module
+    level. Searches experiments/ first, then reference/ -- an id should
+    only ever exist in one of the two."""
+    found_in = None
     matches = sorted(EXPERIMENTS_DIR.glob(f"{experiment_id}-*/experiment.py"))
+    if matches:
+        found_in = EXPERIMENTS_DIR
+    else:
+        matches = sorted(REFERENCE_DIR.glob(f"{experiment_id}-*/experiment.py"))
+        if matches:
+            found_in = REFERENCE_DIR
+
     if not matches:
         raise FileNotFoundError(
-            f"no experiments/{experiment_id}-*/experiment.py found under {EXPERIMENTS_DIR}"
+            f"no {experiment_id}-*/experiment.py found under {EXPERIMENTS_DIR} or {REFERENCE_DIR}"
         )
     if len(matches) > 1:
         raise RuntimeError(f"multiple experiment folders match id {experiment_id!r}: {matches}")
@@ -98,4 +124,5 @@ def load_experiment(experiment_id: str) -> Experiment:
 
     if not hasattr(module, "experiment"):
         raise AttributeError(f"{module_path} must define a module-level `experiment = ...` instance")
+    module.experiment.base_dir = found_in
     return module.experiment
