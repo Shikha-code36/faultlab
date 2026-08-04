@@ -99,3 +99,6 @@ python scripts/new_experiment.py 006 my-slug \
 Scaffolds `experiments/006-my-slug/` with an `experiment.py` stub (fill in
 `matrix()`) and a `README.md` skeleton. See `experiments/005-connection-pool-capacity/`
 for a complete example of the model in use.
+
+For guidance on picking a question, choosing an evidence grade, and what
+review checks for, see [CONTRIBUTING.md](CONTRIBUTING.md).
