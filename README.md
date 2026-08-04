@@ -42,6 +42,7 @@ published.
 | Reference | Status | Key finding |
 |---|---|---|
 | [R001 — pool-capacity validation](reference/R001-pool-capacity-validation/README.md) | closed | Replicating the six operating points behind Experiment 005's linearity claim (5 independent runs each, 30 total, run order randomized) found the behavior remarkably stable — 0.00% error across all 15 clean-edge runs, near-total error with <0.1 percentage-point spread across all 15 collapse-point runs. This doesn't re-derive 005's boundary or ratios (the same points were deliberately re-measured, not re-searched); it shows the behavior at those points isn't an artifact of one lucky run. |
+| [R002 — bounded-deferral validation](reference/R002-bounded-deferral-validation/README.md) | open | Preregistered replication of Experiment 009's regime-dependent claim — that bounded admission deferral measurably cuts error near the collapse boundary (RPS 14) but converges to no benefit further into overload (RPS 16-18). Replicates both compared conditions across all four RPS points (5 runs each, 40 total, run order randomized); not yet run. |
 
 ## Running the stack
 
