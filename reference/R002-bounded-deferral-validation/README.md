@@ -1,6 +1,6 @@
 # R002 -- Reference-grade validation of Experiment 009's bounded-deferral claim
 
-**Status.** open (preregistered, not yet run)
+**Status.** closed
 
 **Evidence grade.** reference -- this validates a specific prior claim
 under replication; it does not ask a new causal question. See
@@ -89,6 +89,18 @@ variability is substantially larger than anticipated, additional
 replications may be added before analysis. Any increase in sample size
 will be documented together with the reason for the change.
 
+**Escalation triggered, once.** After the initial N=5 sweep, the
+`bounded_grace_rps16` cell showed a rescue-rate spread far outside what
+every other cell showed (individual runs: 0%, 10.4%, 20.1%, 23.7%, 61.9% --
+stdev roughly equal to the mean). Every other cell's variance was tight
+(RPS14 stdev 0.6 percentage points, RPS18 stdev 0.3). Per the rule above, 5
+additional
+replicates each of `instantaneous_rps16` and `bounded_grace_rps16` were
+added (seed 2, distinct from the main sweep's seed 1) before writing this
+Finding. This is Brinkline's first triggered escalation -- R001's
+equivalent rule was never triggered because R001's variance came in
+smaller than anticipated, not larger.
+
 **If replication weakens 009's original claim, that is a successful
 outcome of this validation, not a failure of it.** Same cultural statement
 as R001: the purpose of reference-grade evidence is to find out whether a
@@ -109,4 +121,60 @@ single condition rather than averaging out across all eight.
 Only `admission_control_mode` and `rps` vary, and only across the eight
 preregistered cells above.
 
-**Finding.** _Not yet run._
+**Finding.**
+
+| RPS | instantaneous err% (N=5 or 10) | bounded_grace err% | error delta | rescue rate (mean ± stdev) |
+|---|---|---|---|---|
+| 12 | 0.00% | 0.17% | ~0 | 0.0% ± 0.0% |
+| 14 | 16.81% | 13.10% | **−3.71pp** | 76.1% ± 0.6% |
+| 16 (N=10) | 23.03% | 23.03% | ~0 | 22.7% ± 22.5% |
+| 18 | 33.33% | 33.32% | ~0 | 0.47% ± 0.3% |
+
+**RPS12 validity check passes**, same as R001's approach: both conditions
+show ~0% error, confirming this operating point sits below the collapse
+boundary for either condition, so it cannot confound the comparison at the
+other three points.
+
+**RPS14 and RPS18 replicate 009's claim closely, with tight variance.**
+009's single run found 16.7% -> 13.1% error (a 3.6pp reduction) with a 77%
+rescue rate at RPS14; R002's five replicates found 16.81% -> 13.10%
+(3.71pp) with 76.1% rescue, essentially the same number now backed by
+variance data instead of N=1. At RPS18, 009's near-zero benefit and 0.4%
+rescue rate are also replicated closely (33.33% vs 33.32% error, 0.47%
+rescue). **The regime-transition claim's two endpoints -- large benefit
+near the boundary, negligible benefit deep in overload -- hold up under
+replication.**
+
+**RPS16 replicates the mean-error convergence but reveals something 009
+could not have seen: the mechanism underneath it is bimodal, not
+intermediate.** 009's single run reported an 11.5% rescue rate at RPS16,
+read as a midpoint between 77% and 0.4%. Ten replicates instead show two
+distinct behaviors: 8 of 10 runs cluster low (0-25% rescue, roughly
+500-660 deferred decisions over the measurement window), while 2 of 10
+runs jump to ~62% rescue with roughly double the deferred-decision count
+(~1315). The *error rate* stays tight across all ten runs regardless of
+which mode a given run lands in (23.03% mean, 0.08pp stdev) -- the
+instability is entirely inside the deferred-decision mechanism, invisible
+to the aggregate metric 009 relied on. The escalation from N=5 to N=10
+did not narrow this spread (rescue-rate stdev was 23.5pp at N=5, 22.5pp at
+N=10) -- this is a real bimodal split, not a small-sample artifact that
+more replicates would smooth out.
+
+**What this means for 009's claim.** The regime-transition shape --
+large rescue effect near the boundary, shrinking to negligible deep in
+overload -- is supported, not weakened, by replication at RPS14 and
+RPS18. RPS16 is where replication adds something 009's single run
+structurally could not provide: the transition isn't a smooth midpoint,
+it's a point where the admission-control system intermittently flips
+between two qualitatively different operating modes while still landing
+on nearly the same client-visible error rate either way. This is
+consistent with the EWMA utilization signal oscillating around its
+`u_low=0.8` threshold at this specific offered load -- plausible, not
+confirmed by this document, since no experiment here isolates the EWMA
+signal's own trajectory. A dedicated follow-up would need
+`enable_arrival_trace` or a finer read of `b_admission_ewma_utilization_*`
+over time at RPS16 specifically to confirm the mechanism; this document
+only establishes that the bimodal split is real and reproducible.
+
+**Sample size, final.** RPS12/14/18: N=5. RPS16: N=10 (escalated per the
+preregistered rule, documented above). 50 runs total.
