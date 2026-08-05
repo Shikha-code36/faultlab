@@ -1,7 +1,10 @@
 # Brinkline
 
-A reproducible laboratory for injecting real failures into small systems,
-observing how those failures propagate, and explaining why.
+Reproducible overload experimentation for distributed systems: find where a
+system stops degrading gracefully, and why.
+
+Brinkline injects real failures into small, real systems, observes how those
+failures propagate, and explains the mechanism behind them.
 
 ```
 Load Generator (k6) -> Service A (FastAPI, retry client + circuit breaker) -> Service B (FastAPI + asyncpg) -> Toxiproxy -> PostgreSQL
