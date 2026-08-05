@@ -17,8 +17,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from faultlab.experiment import load_experiment
-from faultlab.runner import Runner
+from brinkline.experiment import load_experiment
+from brinkline.runner import Runner
 
 
 def main():

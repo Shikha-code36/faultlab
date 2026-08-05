@@ -4,9 +4,9 @@ import asyncpg
 
 DB_HOST = os.environ.get("DB_HOST", "toxiproxy")
 DB_PORT = int(os.environ.get("DB_PORT", "5433"))
-DB_USER = os.environ.get("DB_USER", "faultlab")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "faultlab")
-DB_NAME = os.environ.get("DB_NAME", "faultlab")
+DB_USER = os.environ.get("DB_USER", "brinkline")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "brinkline")
+DB_NAME = os.environ.get("DB_NAME", "brinkline")
 
 POOL_MIN_SIZE = int(os.environ.get("POOL_MIN_SIZE", "5"))
 POOL_MAX_SIZE = int(os.environ.get("POOL_MAX_SIZE", "10"))

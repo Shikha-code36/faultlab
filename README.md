@@ -1,4 +1,4 @@
-# FaultLab
+# Brinkline
 
 A reproducible laboratory for injecting real failures into small systems,
 observing how those failures propagate, and explaining why.
@@ -61,7 +61,7 @@ curl http://localhost:8000/work?id=1
 ## Running an experiment
 
 Every experiment lives under `experiments/<id>-<slug>/` and declares its own
-run matrix in `experiment.py` (see `faultlab/experiment.py` for the model).
+run matrix in `experiment.py` (see `brinkline/experiment.py` for the model).
 To run one end to end:
 
 ```
@@ -84,7 +84,7 @@ via the shared `Runner`, writing artifacts to
 
 `analyze_results.py` aggregates those runs into `experiments/<id>-<slug>/summary.csv`
 and reports each experiment's saturation/collapse analysis (see
-`faultlab/analysis.py`): a run is flagged saturated when its error rate is
+`brinkline/analysis.py`): a run is flagged saturated when its error rate is
 above 0%, any pool-acquisition timeout occurred on Service B, or Service B's
 pool ran at its configured max size. Injected latency alone always makes
 requests slower — that's just propagation, not saturation, so it isn't used

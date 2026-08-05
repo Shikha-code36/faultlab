@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from faultlab.experiment import Experiment, ExperimentMetadata
+from brinkline.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="009",
@@ -88,7 +88,7 @@ class ExperimentBoundedGracePeriod(Experiment):
                 "off" if not r.get("admission_control_enabled") else r.get("admission_control_mode")
             )
 
-        from faultlab.analysis import annotate_saturation, first_saturation_points
+        from brinkline.analysis import annotate_saturation, first_saturation_points
 
         annotate_saturation(runs)
         collapse_points = first_saturation_points(runs, group_key="admission_condition")

@@ -1,7 +1,7 @@
 """Aggregates one experiment's raw per-run artifacts into a flat summary table.
 
 Reads every experiments/<experiment>/runs/<run_id>/{metadata,results}.json
-and flattens them into one row per run -- the input to faultlab.analysis
+and flattens them into one row per run -- the input to brinkline.analysis
 and to each Experiment's analyze().
 """
 

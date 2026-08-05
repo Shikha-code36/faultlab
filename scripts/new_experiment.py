@@ -1,4 +1,4 @@
-"""Scaffolds a new FaultLab experiment folder from the Experiment model.
+"""Scaffolds a new Brinkline experiment folder from the Experiment model.
 
 Creates experiments/<id>-<slug>/ with an experiment.py stub (metadata
 filled in, matrix() left for you to define) and a hand-written README.md
@@ -26,7 +26,7 @@ EXPERIMENT_PY_TEMPLATE = '''"""Experiment {id}: {title}."""
 
 from __future__ import annotations
 
-from faultlab.experiment import Experiment, ExperimentMetadata
+from brinkline.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="{id}",

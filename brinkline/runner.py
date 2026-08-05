@@ -1,4 +1,4 @@
-"""Runner: the shared execution engine for any FaultLab experiment.
+"""Runner: the shared execution engine for any Brinkline experiment.
 
 Takes one run config (as declared by an Experiment's matrix()) and drives
 the real stack -- Service A/B configuration, Toxiproxy, k6 -- identically
@@ -44,7 +44,7 @@ DEFAULT_POOL_SIZE = 10  # matches docker-compose.yml's POOL_MAX_SIZE default
 def _git_commit_info() -> dict:
     """The commit a run was executed against, plus whether the working
     tree was dirty at that moment. This is what makes it valid to omit a
-    `version` field from ExperimentMetadata (see faultlab/experiment.py) --
+    `version` field from ExperimentMetadata (see brinkline/experiment.py) --
     that reasoning only holds if a run's metadata actually records which
     commit it ran against, rather than assuming it can be reconstructed
     after the fact."""

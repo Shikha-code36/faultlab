@@ -3,7 +3,7 @@
 Loads experiments/<id>-<slug>/experiment.py, aggregates every run under its
 runs/ directory into a summary table, and calls its analyze() (which
 defaults to the shared saturation/collapse check every experiment has used
-so far -- see faultlab.analysis).
+so far -- see brinkline.analysis).
 
 Usage:
   python scripts/analyze_results.py 005
@@ -19,8 +19,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from faultlab.aggregate import load_runs, write_csv
-from faultlab.experiment import load_experiment
+from brinkline.aggregate import load_runs, write_csv
+from brinkline.experiment import load_experiment
 
 
 def print_table(runs: list[dict]) -> None:

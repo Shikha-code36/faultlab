@@ -7,7 +7,7 @@ import random
 import statistics
 from collections import defaultdict
 
-from faultlab.experiment import Experiment, ExperimentMetadata
+from brinkline.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="R001",
@@ -92,7 +92,7 @@ class ExperimentR001(Experiment):
         # but still annotates each run (for the shared CLI's table printer,
         # and because "did the shared saturation flag agree" is itself a
         # useful cross-check, not because collapse points are searched here.
-        from faultlab.analysis import annotate_saturation
+        from brinkline.analysis import annotate_saturation
 
         annotate_saturation(runs)
 

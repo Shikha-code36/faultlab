@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: faultlab
-      POSTGRES_PASSWORD: faultlab
-      POSTGRES_DB: faultlab
+      POSTGRES_USER: brinkline
+      POSTGRES_PASSWORD: brinkline
+      POSTGRES_DB: brinkline
     volumes:
       - ./services/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U faultlab -d faultlab"]
+      test: ["CMD-SHELL", "pg_isready -U brinkline -d brinkline"]
       interval: 2s
       timeout: 3s
       retries: 20
@@ -62,9 +62,9 @@ services:
     environment:
       DB_HOST: toxiproxy
       DB_PORT: "5433"
-      DB_USER: faultlab
-      DB_PASSWORD: faultlab
-      DB_NAME: faultlab
+      DB_USER: brinkline
+      DB_PASSWORD: brinkline
+      DB_NAME: brinkline
       POOL_MIN_SIZE: "5"
       POOL_MAX_SIZE: "${POOL_MAX_SIZE:-10}"
       POOL_ACQUIRE_TIMEOUT: "2.0"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from faultlab.experiment import Experiment, ExperimentMetadata
+from brinkline.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="002",
