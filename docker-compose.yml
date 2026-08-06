@@ -1,3 +1,5 @@
+name: slimybug
+
 services:
   postgres:
     image: postgres:16
