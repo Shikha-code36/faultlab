@@ -164,6 +164,7 @@ async def work(id: int | None = None):
 
     if ADMISSION_CONTROL_ENABLED:
         admission_check_start = time.monotonic()
+        admission_check_start_ns = time.monotonic_ns()
         pool = app.state.pool
         pool_active = pool.get_size() - pool.get_idle_size()
 
@@ -181,6 +182,11 @@ async def work(id: int | None = None):
         if ENABLE_ADMISSION_DECISION_TRACE:
             _admission_decision_trace.append(
                 {
+                    # Decision-start time, not completion time -- lets a
+                    # deferred decision's wait be excluded when reconstructing
+                    # when in the run each decision was *made*, not when its
+                    # (possibly 20ms-delayed) outcome was appended.
+                    "t_ns": admission_check_start_ns,
                     "pool_active": pool_active,
                     "rejected": rejected,
                     "deferred": defer_info["deferred"],

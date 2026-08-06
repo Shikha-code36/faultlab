@@ -167,14 +167,28 @@ RPS18. RPS16 is where replication adds something 009's single run
 structurally could not provide: the transition isn't a smooth midpoint,
 it's a point where the admission-control system intermittently flips
 between two qualitatively different operating modes while still landing
-on nearly the same client-visible error rate either way. This is
-consistent with the EWMA utilization signal oscillating around its
-`u_low=0.8` threshold at this specific offered load -- plausible, not
-confirmed by this document, since no experiment here isolates the EWMA
-signal's own trajectory. A dedicated follow-up would need
-`enable_arrival_trace` or a finer read of `b_admission_ewma_utilization_*`
-over time at RPS16 specifically to confirm the mechanism; this document
-only establishes that the bimodal split is real and reproducible.
+on nearly the same client-visible error rate either way.
+
+**What causes the split is not yet known, and is narrower than it might
+look.** `bounded_grace` (`BoundedGraceAdmission`, see
+`services/service-b/app/admission.py`) uses the same hard instantaneous
+threshold as 006 (`pool_active >= pool_max_size`) on both the first read
+and the re-read after the grace wait -- it does not involve the EWMA
+signal or `u_low` at all; those belong to 007 and 008 respectively, not
+to this mechanism. So the bimodal split is a property of how pool
+occupancy itself behaves near RPS16, not of any trailing-signal staleness.
+A plausible but unconfirmed account: at RPS16 offered load sits close
+enough to the pool's effective capacity that whether a given run's pool
+occupancy clears within the 20ms grace window is sensitive to exactly how
+request arrivals and query completions happen to interleave over that
+run's ~90s measurement window -- which could plausibly settle into
+different quasi-stable occupancy patterns from run to run. This document
+does not test that account; it only establishes that the bimodal split
+itself is real and reproducible, not a small-sample artifact. A dedicated
+follow-up would need timestamped, time-resolved pool-occupancy data within
+a single RPS16 run (neither `admission_decision_trace.csv`'s current
+schema nor `enable_arrival_trace` currently records this) to confirm or
+rule out this account.
 
 **Sample size, final.** RPS12/14/18: N=5. RPS16: N=10 (escalated per the
 preregistered rule, documented above). 50 runs total.

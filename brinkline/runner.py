@@ -586,12 +586,17 @@ class Runner:
             with decision_trace_path.open("w") as f:
                 # deferred/wait_ms/pool_active_2 are only populated under
                 # Experiment 009's bounded_grace mode -- blank otherwise.
-                f.write("pool_active,rejected,deferred,wait_ms,pool_active_2\n")
+                # t_ns (decision-start monotonic time, added for Experiment
+                # 010) is blank only for runs recorded before this field
+                # existed -- absent from the source dict entirely, not None.
+                f.write("t_ns,pool_active,rejected,deferred,wait_ms,pool_active_2\n")
                 for d in decision_trace.get("decisions", []):
+                    t_ns = d.get("t_ns")
                     deferred = d.get("deferred", False)
                     wait_ms = d.get("wait_ms")
                     pool_active_2 = d.get("pool_active_2")
                     f.write(
+                        f"{'' if t_ns is None else t_ns},"
                         f"{d['pool_active']},{d['rejected']},{deferred},"
                         f"{'' if wait_ms is None else wait_ms},"
                         f"{'' if pool_active_2 is None else pool_active_2}\n"
