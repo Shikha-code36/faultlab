@@ -1,4 +1,4 @@
-"""Scaffolds a new Slimybug experiment folder from the Experiment model.
+"""Scaffolds a new SlimyBug experiment folder from the Experiment model.
 
 Creates experiments/<id>-<slug>/ with an experiment.py stub (metadata
 filled in, matrix() left for you to define) and a hand-written README.md

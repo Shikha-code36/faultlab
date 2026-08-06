@@ -152,7 +152,7 @@ the boundary at each pool size rather than replicating a boundary
 already found.
 
 **A secondary observation, not to be overstated.** This is the first
-time Slimybug has subjected one of its own conclusions to a higher
+time SlimyBug has subjected one of its own conclusions to a higher
 evidence standard than the one it was originally produced under. In that
 narrow sense, R001 is validating something about the project's
 methodology as much as it is strengthening confidence in Experiment 005

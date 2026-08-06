@@ -4,7 +4,7 @@ The runner writes one arrival_ns per line to <run_dir>/arrival_trace.csv when
 a run is started with --trace-arrivals / --exp004. This script buckets those
 arrivals into fixed-width windows to show whether they land in synchronized
 bursts (immediate retries) or a smoother spread (full_jitter) -- the ~1Hz
-snapshot polling used everywhere else in Slimybug can't show this, since a
+snapshot polling used everywhere else in SlimyBug can't show this, since a
 100-200ms backoff schedule lives entirely inside one polling bucket.
 
 Usage:

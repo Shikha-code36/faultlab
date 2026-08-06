@@ -1,4 +1,4 @@
-"""Core Slimybug experiment model.
+"""Core SlimyBug experiment model.
 
 An Experiment describes work -- its identity, its question, and the run
 matrix that answers it -- it does not execute that work. Execution is

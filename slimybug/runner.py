@@ -1,4 +1,4 @@
-"""Runner: the shared execution engine for any Slimybug experiment.
+"""Runner: the shared execution engine for any SlimyBug experiment.
 
 Takes one run config (as declared by an Experiment's matrix()) and drives
 the real stack -- Service A/B configuration, Toxiproxy, k6 -- identically

@@ -1,9 +1,9 @@
-# Slimybug
+# SlimyBug
 
 Reproducible overload experimentation for distributed systems: find where a
 system stops degrading gracefully, and why.
 
-Slimybug injects real failures into small, real systems, observes how those
+SlimyBug injects real failures into small, real systems, observes how those
 failures propagate, and explains the mechanism behind them.
 
 ```
