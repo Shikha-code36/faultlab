@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from brinkline.experiment import Experiment, ExperimentMetadata
+from slimybug.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="004",

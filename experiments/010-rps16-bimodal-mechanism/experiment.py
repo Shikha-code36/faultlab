@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import statistics
 
-from brinkline.experiment import Experiment, ExperimentMetadata
+from slimybug.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="010",
@@ -94,7 +94,7 @@ class ExperimentRps16BimodalMechanism(Experiment):
         ]
 
     def analyze(self, runs: list[dict]) -> dict:
-        from brinkline.analysis import annotate_saturation
+        from slimybug.analysis import annotate_saturation
 
         annotate_saturation(runs)
 

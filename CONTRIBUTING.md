@@ -1,4 +1,4 @@
-# Contributing to Brinkline
+# Contributing to Slimybug
 
 This is a guide for a human contributing an experiment or change. It covers
 the judgment calls that aren't mechanical — for setup, running experiments,

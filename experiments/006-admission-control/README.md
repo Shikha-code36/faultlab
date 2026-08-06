@@ -28,7 +28,7 @@ check is skipped, not a threshold set to always-admit.
 **Why this signal, not a proxy.** The gate condition is not a heuristic
 correlated with saturation -- it is the exact criterion every experiment
 since 001 has used to define saturation (`pool_active_max >= pool_size`
-in `brinkline/analysis.py`), expressed in the same units as the resource's
+in `slimybug/analysis.py`), expressed in the same units as the resource's
 own capacity limit. Necessity: it triggers exactly when, and only when,
 admitting the request would force it to wait -- a proxy like in-flight
 request count could reject a request that would have found a free
@@ -105,7 +105,7 @@ the actual analog of what Experiment 003's breaker prevented from
 reaching B -- and a new field, `b_admission_rejected_count` (plus its own
 p95 latency, `b_admission_rejected_latency_p95_ms`), tracks rejections as
 a distinct, first-class outcome rather than folding them into generic
-error counts. `admission_rejection_rate` (in `brinkline/runner.py`'s
+error counts. `admission_rejection_rate` (in `slimybug/runner.py`'s
 `summarize_app_metrics`) is rejections as a fraction of everything that
 reached Service B (rejected + pool-attempted), giving a direct read on
 how much demand was shed at the door.

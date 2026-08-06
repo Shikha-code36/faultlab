@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from brinkline.experiment import Experiment, ExperimentMetadata
+from slimybug.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="005",
@@ -72,7 +72,7 @@ class ExperimentConnectionPoolCapacity(Experiment):
         # doesn't by itself mean more work got done. b_success_count is
         # Service B's actual completed-query count in the measure window --
         # the same quantity 002/004 called "completed throughput" (there
-        # recomputed ad hoc; now a stored column via brinkline.aggregate).
+        # recomputed ad hoc; now a stored column via slimybug.aggregate).
         result["throughput_at_collapse"] = {
             pool_size: run.get("b_success_count")
             for pool_size, run in result["collapse_points"].items()

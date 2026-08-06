@@ -7,7 +7,7 @@ import random
 import statistics
 from collections import defaultdict
 
-from brinkline.experiment import Experiment, ExperimentMetadata
+from slimybug.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="R002",
@@ -123,7 +123,7 @@ class ExperimentR002(Experiment):
         # first-saturation-point machinery doesn't apply -- override rather
         # than calling super(). Each run is still annotated (shared CLI
         # table printer, and cross-checking the saturation flag agrees).
-        from brinkline.analysis import annotate_saturation
+        from slimybug.analysis import annotate_saturation
 
         annotate_saturation(runs)
 

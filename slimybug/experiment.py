@@ -1,10 +1,10 @@
-"""Core Brinkline experiment model.
+"""Core Slimybug experiment model.
 
 An Experiment describes work -- its identity, its question, and the run
 matrix that answers it -- it does not execute that work. Execution is
-Runner's job (brinkline.runner), aggregation is brinkline.aggregate's, and
+Runner's job (slimybug.runner), aggregation is slimybug.aggregate's, and
 the saturation/collapse check every experiment has relied on lives in
-brinkline.analysis. Keeping Experiment free of I/O means its definition
+slimybug.analysis. Keeping Experiment free of I/O means its definition
 stays reviewable as data: matrix() and analyze() are the only things that
 change from one experiment to the next.
 """
@@ -74,7 +74,7 @@ class Experiment(ABC):
         specific derived metrics (e.g. Experiment 004's arrival-CV), calling
         super().analyze(runs) first so the shared check still runs.
         """
-        from brinkline.analysis import annotate_saturation, first_saturation_points
+        from slimybug.analysis import annotate_saturation, first_saturation_points
 
         annotate_saturation(runs)
         return {
@@ -118,7 +118,7 @@ def load_experiment(experiment_id: str) -> Experiment:
         raise RuntimeError(f"multiple experiment folders match id {experiment_id!r}: {matches}")
 
     module_path = matches[0]
-    spec = importlib.util.spec_from_file_location(f"brinkline_experiment_{experiment_id}", module_path)
+    spec = importlib.util.spec_from_file_location(f"slimybug_experiment_{experiment_id}", module_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 

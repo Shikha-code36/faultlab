@@ -97,7 +97,7 @@ stdev roughly equal to the mean). Every other cell's variance was tight
 additional
 replicates each of `instantaneous_rps16` and `bounded_grace_rps16` were
 added (seed 2, distinct from the main sweep's seed 1) before writing this
-Finding. This is Brinkline's first triggered escalation -- R001's
+Finding. This is Slimybug's first triggered escalation -- R001's
 equivalent rule was never triggered because R001's variance came in
 smaller than anticipated, not larger.
 

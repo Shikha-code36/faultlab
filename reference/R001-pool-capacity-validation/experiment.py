@@ -7,7 +7,7 @@ import random
 import statistics
 from collections import defaultdict
 
-from brinkline.experiment import Experiment, ExperimentMetadata
+from slimybug.experiment import Experiment, ExperimentMetadata
 
 METADATA = ExperimentMetadata(
     id="R001",
@@ -92,7 +92,7 @@ class ExperimentR001(Experiment):
         # but still annotates each run (for the shared CLI's table printer,
         # and because "did the shared saturation flag agree" is itself a
         # useful cross-check, not because collapse points are searched here.
-        from brinkline.analysis import annotate_saturation
+        from slimybug.analysis import annotate_saturation
 
         annotate_saturation(runs)
 
