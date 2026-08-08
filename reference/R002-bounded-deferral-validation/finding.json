@@ -1,0 +1,116 @@
+{
+  "id": "R002",
+  "claim": "Bounded admission deferral (grace_ms=20) measurably reduces client-visible error near the collapse boundary (RPS14: 16.81% instantaneous vs 13.10% bounded_grace, -3.71pp, 76.1% rescue rate), that benefit is statistically gone by RPS18 (33.33% vs 33.32%), and at RPS16 the mean error rates converge (23.03% both) while the underlying rescue-decision mechanism is bimodal, not intermediate -- 8 of 10 runs cluster at 0-25% rescue, 2 of 10 jump to ~62%, a real reproducible split invisible to the aggregate error-rate metric.",
+  "scope": {
+    "experiment_id": "R002",
+    "fixed_params": {
+      "injected_latency_ms": 400,
+      "retry_policy": "none",
+      "breaker_enabled": false,
+      "pool_size": 10,
+      "admission_grace_ms": 20
+    },
+    "swept": {
+      "variable": "admission_control_mode",
+      "tested_values": [
+        "instantaneous",
+        "bounded_grace"
+      ]
+    }
+  },
+  "evidence": {
+    "grade": "reference",
+    "run_ids": {
+      "bounded_grace_rps12": [
+        "20260805T130755Z_rps12_lat400_none_admission-on_bounded_grace",
+        "20260805T133455Z_rps12_lat400_none_admission-on_bounded_grace",
+        "20260805T133944Z_rps12_lat400_none_admission-on_bounded_grace",
+        "20260805T134432Z_rps12_lat400_none_admission-on_bounded_grace",
+        "20260805T142402Z_rps12_lat400_none_admission-on_bounded_grace"
+      ],
+      "bounded_grace_rps14": [
+        "20260805T132958Z_rps14_lat400_none_admission-on_bounded_grace",
+        "20260805T134208Z_rps14_lat400_none_admission-on_bounded_grace",
+        "20260805T140200Z_rps14_lat400_none_admission-on_bounded_grace",
+        "20260805T142130Z_rps14_lat400_none_admission-on_bounded_grace",
+        "20260805T142851Z_rps14_lat400_none_admission-on_bounded_grace"
+      ],
+      "bounded_grace_rps16": [
+        "20260805T132013Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T133231Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T134929Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T142626Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T143115Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T145739Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T150011Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T150734Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T151008Z_rps16_lat400_none_admission-on_bounded_grace",
+        "20260805T151508Z_rps16_lat400_none_admission-on_bounded_grace"
+      ],
+      "bounded_grace_rps18": [
+        "20260805T131741Z_rps18_lat400_none_admission-on_bounded_grace",
+        "20260805T133720Z_rps18_lat400_none_admission-on_bounded_grace",
+        "20260805T135432Z_rps18_lat400_none_admission-on_bounded_grace",
+        "20260805T135704Z_rps18_lat400_none_admission-on_bounded_grace",
+        "20260805T144100Z_rps18_lat400_none_admission-on_bounded_grace"
+      ],
+      "instantaneous_rps12": [
+        "20260805T131021Z_rps12_lat400_none_admission-on",
+        "20260805T131517Z_rps12_lat400_none_admission-on",
+        "20260805T141153Z_rps12_lat400_none_admission-on",
+        "20260805T141642Z_rps12_lat400_none_admission-on",
+        "20260805T143836Z_rps12_lat400_none_admission-on"
+      ],
+      "instantaneous_rps14": [
+        "20260805T132238Z_rps14_lat400_none_admission-on",
+        "20260805T132510Z_rps14_lat400_none_admission-on",
+        "20260805T141906Z_rps14_lat400_none_admission-on",
+        "20260805T143340Z_rps14_lat400_none_admission-on",
+        "20260805T144332Z_rps14_lat400_none_admission-on"
+      ],
+      "instantaneous_rps16": [
+        "20260805T131253Z_rps16_lat400_none_admission-on",
+        "20260805T134657Z_rps16_lat400_none_admission-on",
+        "20260805T135928Z_rps16_lat400_none_admission-on",
+        "20260805T140704Z_rps16_lat400_none_admission-on",
+        "20260805T140928Z_rps16_lat400_none_admission-on",
+        "20260805T150236Z_rps16_lat400_none_admission-on",
+        "20260805T150509Z_rps16_lat400_none_admission-on",
+        "20260805T151234Z_rps16_lat400_none_admission-on",
+        "20260805T151742Z_rps16_lat400_none_admission-on",
+        "20260805T152014Z_rps16_lat400_none_admission-on"
+      ],
+      "instantaneous_rps18": [
+        "20260805T132734Z_rps18_lat400_none_admission-on",
+        "20260805T135200Z_rps18_lat400_none_admission-on",
+        "20260805T140432Z_rps18_lat400_none_admission-on",
+        "20260805T141417Z_rps18_lat400_none_admission-on",
+        "20260805T143612Z_rps18_lat400_none_admission-on"
+      ]
+    },
+    "n_per_condition": {
+      "rps12": 5,
+      "rps14": 5,
+      "rps16": 10,
+      "rps18": 5
+    },
+    "variance_reported": true,
+    "analysis_ref": "reference/R002-bounded-deferral-validation/summary.csv"
+  },
+  "validity_checks": [
+    {
+      "name": "rps12_validity_check",
+      "passed": true,
+      "note": "~0% error both conditions, confirms below collapse boundary"
+    },
+    {
+      "name": "escalation_rule",
+      "passed": true,
+      "note": "triggered once at bounded_grace_rps16 -- N=5 to N=10, rescue-rate spread stayed wide (23.5pp -> 22.5pp stdev), a real bimodal split not a small-sample artifact"
+    }
+  ],
+  "status": "closed",
+  "narrative_ref": "reference/R002-bounded-deferral-validation/README.md",
+  "supersedes": null,
+  "refines": "009"
+}

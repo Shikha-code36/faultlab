@@ -1,0 +1,100 @@
+{
+  "id": "R003",
+  "claim": "Across 5 replicated runs at each of Experiment 011's eight RPS16 cells, the continuous-degradation shape holds -- every adjacent-cell gap (0.95-32.83pp) is far larger than any cell's own spread (stdev <=2.63pp), and no cell shows the bimodal split Experiment 010 found in a different mechanism at this RPS. One correction to 011: half_life=4.0s does not fully converge to `off` -- it replicates at 95.11% (stdev 0.04pp) against off's 99.90% (stdev 0.08pp), a small but real and reproducible residual EWMA benefit, not the exact match 011's single run measured (99.93% both).",
+  "scope": {
+    "experiment_id": "R003",
+    "fixed_params": {
+      "injected_latency_ms": 400,
+      "retry_policy": "none",
+      "breaker_enabled": false,
+      "pool_size": 10,
+      "rps": 16
+    },
+    "swept": {
+      "variable": "admission_ewma_half_life_s",
+      "tested_values": [
+        0.06,
+        0.25,
+        0.5,
+        1.0,
+        2.0,
+        4.0
+      ]
+    }
+  },
+  "evidence": {
+    "grade": "reference",
+    "run_ids": {
+      "ewma_hl0.06": [
+        "20260807T161414Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T164940Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T170214Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T170949Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T171221Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl0.25": [
+        "20260807T162919Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T165445Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T170717Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T171718Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T174008Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl0.5": [
+        "20260807T160908Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T163656Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T164202Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T164708Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T172726Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl1.0": [
+        "20260807T163152Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T164435Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T170446Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T172454Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T173231Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl2.0": [
+        "20260807T162152Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T163424Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T165212Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T172959Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T173504Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl4.0": [
+        "20260807T161919Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T163930Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T165716Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T165949Z_rps16_lat400_none_admission-on_ewma",
+        "20260807T174513Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "instantaneous": [
+        "20260807T162423Z_rps16_lat400_none_admission-on",
+        "20260807T162655Z_rps16_lat400_none_admission-on",
+        "20260807T172223Z_rps16_lat400_none_admission-on",
+        "20260807T173736Z_rps16_lat400_none_admission-on",
+        "20260807T174746Z_rps16_lat400_none_admission-on"
+      ],
+      "off": [
+        "20260807T161141Z_rps16_lat400_none",
+        "20260807T161646Z_rps16_lat400_none",
+        "20260807T171445Z_rps16_lat400_none",
+        "20260807T171950Z_rps16_lat400_none",
+        "20260807T174240Z_rps16_lat400_none"
+      ]
+    },
+    "n_per_condition": 5,
+    "variance_reported": true,
+    "analysis_ref": "reference/R003-half-life-sensitivity-validation/summary.csv"
+  },
+  "validity_checks": [
+    {
+      "name": "escalation_rule",
+      "passed": true,
+      "note": "not triggered -- max stdev 2.63pp, no bimodal split observed"
+    }
+  ],
+  "status": "closed",
+  "narrative_ref": "reference/R003-half-life-sensitivity-validation/README.md",
+  "supersedes": null,
+  "refines": "011"
+}

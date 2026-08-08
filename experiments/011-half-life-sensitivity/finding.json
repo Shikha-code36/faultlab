@@ -1,0 +1,68 @@
+{
+  "id": "011",
+  "claim": "At RPS 16, error rate rises smoothly and continuously as the EWMA admission signal's half-life increases from 0.06s to 4.0s, with no adjacent pair of half-lives separated by a disproportionate jump -- information freshness has a graded effect, not a privileged threshold half-life.",
+  "scope": {
+    "experiment_id": "011",
+    "fixed_params": {
+      "injected_latency_ms": 400,
+      "retry_policy": "none",
+      "breaker_enabled": false,
+      "pool_size": 10,
+      "rps": 16
+    },
+    "swept": {
+      "variable": "admission_ewma_half_life_s",
+      "tested_values": [
+        0.06,
+        0.25,
+        0.5,
+        1.0,
+        2.0,
+        4.0
+      ]
+    }
+  },
+  "evidence": {
+    "grade": "research",
+    "run_ids": {
+      "ewma_hl0.06": [
+        "20260806T134035Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl0.25": [
+        "20260806T134307Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl0.5": [
+        "20260806T134539Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl1.0": [
+        "20260806T134813Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl2.0": [
+        "20260806T135044Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "ewma_hl4.0": [
+        "20260806T135318Z_rps16_lat400_none_admission-on_ewma"
+      ],
+      "instantaneous": [
+        "20260806T133803Z_rps16_lat400_none_admission-on"
+      ],
+      "off": [
+        "20260806T133529Z_rps16_lat400_none"
+      ]
+    },
+    "n_per_condition": 1,
+    "variance_reported": false,
+    "analysis_ref": "experiments/011-half-life-sensitivity/summary.csv"
+  },
+  "validity_checks": [
+    {
+      "name": "rps12_validity_check",
+      "passed": true,
+      "note": "~0% admission_rejection_rate at RPS 12 for instantaneous and every half-life"
+    }
+  ],
+  "status": "closed",
+  "narrative_ref": "experiments/011-half-life-sensitivity/README.md",
+  "supersedes": null,
+  "refines": null
+}

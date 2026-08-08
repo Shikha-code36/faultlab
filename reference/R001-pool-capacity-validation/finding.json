@@ -1,0 +1,82 @@
+{
+  "id": "R001",
+  "claim": "Across 5 replicated runs each at three clean-edge and three collapse-point cells (pool sizes 10/20/40), clean-edge error rate was exactly 0.00% every time and collapse-point error rate clustered near-total (stdev <=0.095pp) at every pool size -- Experiment 005's single-run observations at these six cells were not artifacts of one lucky execution.",
+  "scope": {
+    "experiment_id": "R001",
+    "fixed_params": {
+      "injected_latency_ms": 400,
+      "retry_policy": "none",
+      "breaker_enabled": false,
+      "enable_arrival_trace": false
+    },
+    "swept": {
+      "variable": "pool_size",
+      "tested_values": [
+        10,
+        20,
+        40
+      ]
+    }
+  },
+  "evidence": {
+    "grade": "reference",
+    "run_ids": {
+      "pool10_rps12": [
+        "20260730T114018Z_rps12_lat400_none",
+        "20260730T120223Z_rps12_lat400_none",
+        "20260730T122204Z_rps12_lat400_none",
+        "20260730T122653Z_rps12_lat400_none",
+        "20260730T123854Z_rps12_lat400_none"
+      ],
+      "pool10_rps14": [
+        "20260730T114248Z_rps14_lat400_none",
+        "20260730T114738Z_rps14_lat400_none",
+        "20260730T115235Z_rps14_lat400_none",
+        "20260730T120950Z_rps14_lat400_none",
+        "20260730T122432Z_rps14_lat400_none"
+      ],
+      "pool20_rps24": [
+        "20260730T113309Z_rps24_lat400_none_pool20",
+        "20260730T113529Z_rps24_lat400_none_pool20",
+        "20260730T120003Z_rps24_lat400_none_pool20",
+        "20260730T121219Z_rps24_lat400_none_pool20",
+        "20260730T121715Z_rps24_lat400_none_pool20"
+      ],
+      "pool20_rps28": [
+        "20260730T113039Z_rps28_lat400_none_pool20",
+        "20260730T115734Z_rps28_lat400_none_pool20",
+        "20260730T120451Z_rps28_lat400_none_pool20",
+        "20260730T121942Z_rps28_lat400_none_pool20",
+        "20260730T123625Z_rps28_lat400_none_pool20"
+      ],
+      "pool40_rps48": [
+        "20260730T113749Z_rps48_lat400_none_pool40",
+        "20260730T115008Z_rps48_lat400_none_pool40",
+        "20260730T120721Z_rps48_lat400_none_pool40",
+        "20260730T121447Z_rps48_lat400_none_pool40",
+        "20260730T122914Z_rps48_lat400_none_pool40"
+      ],
+      "pool40_rps56": [
+        "20260730T112810Z_rps56_lat400_none_pool40",
+        "20260730T114509Z_rps56_lat400_none_pool40",
+        "20260730T115505Z_rps56_lat400_none_pool40",
+        "20260730T123142Z_rps56_lat400_none_pool40",
+        "20260730T123403Z_rps56_lat400_none_pool40"
+      ]
+    },
+    "n_per_condition": 5,
+    "variance_reported": true,
+    "analysis_ref": "reference/R001-pool-capacity-validation/summary.csv"
+  },
+  "validity_checks": [
+    {
+      "name": "escalation_rule",
+      "passed": true,
+      "note": "not triggered -- observed variance smaller than anticipated"
+    }
+  ],
+  "status": "closed",
+  "narrative_ref": "reference/R001-pool-capacity-validation/README.md",
+  "supersedes": null,
+  "refines": "005"
+}
