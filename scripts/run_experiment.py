@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from slimybug.experiment import load_experiment
+from slimybug.reference_adapter import ReferenceAdapter
 from slimybug.runner import Runner
 
 
@@ -29,10 +30,10 @@ def main():
     experiment = load_experiment(args.experiment_id)
     configs = experiment.matrix()
 
-    runner = Runner(experiment.runs_dir, experiment.metadata.id)
+    runner = Runner(experiment.runs_dir, experiment.metadata.id, adapter=ReferenceAdapter())
     print(f"[{experiment.metadata.id}] running {len(configs)} run(s) from matrix()")
     for config in configs:
-        runner.run(**config)
+        runner.run(config)
 
 
 if __name__ == "__main__":
