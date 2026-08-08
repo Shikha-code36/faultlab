@@ -96,6 +96,23 @@ pool ran at its configured max size. Injected latency alone always makes
 requests slower — that's just propagation, not saturation, so it isn't used
 as a signal on its own.
 
+## Browsing Findings
+
+Every closed experiment and reference-grade validation above has a
+structured `finding.json` alongside its narrative `README.md` (schema in
+`slimybug/finding.py`):
+
+```
+python scripts/findings.py list
+python scripts/findings.py show 011
+python scripts/findings.py compare 011 R003
+```
+
+`compare` first checks whether two Findings are even meaningfully
+comparable — connected by a `refines`/`supersedes` relationship, or
+sweeping the same variable with overlapping fixed parameters — before
+diffing their status, evidence, and validity checks.
+
 ## Starting a new experiment
 
 ```
